@@ -1,4 +1,4 @@
-// Componente CSVImporter — importador de cartola del Banco de Chile
+// Componente CSVImporter — importador de cartola TXT del Banco de Chile
 // Funciona en web y en móvil gracias a expo-document-picker
 
 import React, { useState } from 'react';
@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { supabase } from '../lib/supabase';
-import { parsearCSVBancoChile, csvRowsATransacciones } from '../lib/csvParser';
+import { parsearTXTBancoChile } from '../lib/csvParser';
 import { importarTransacciones } from '../lib/importService';
 import { ResultadoImportacion } from '../types';
 
@@ -43,8 +43,7 @@ export default function CSVImporter() {
       // En web: abre el explorador de archivos del navegador
       // En iOS/Android: abre el explorador de archivos del sistema
       const resultado = await DocumentPicker.getDocumentAsync({
-        type: ['text/csv', 'text/plain', 'application/octet-stream'],
-        // copyToCacheDirectory: true hace que el archivo sea accesible
+        type: ['text/plain', 'application/octet-stream'],
         copyToCacheDirectory: true,
       });
 
@@ -57,49 +56,38 @@ export default function CSVImporter() {
       const archivo = resultado.assets[0];
 
       // --- PASO 2: Leer el contenido del archivo ---
-      // En web y móvil, el archivo tiene una URI que podemos fetch()
-      let textoCSV: string;
+      // fetch() funciona con URIs locales tanto en web como en móvil (Expo lo maneja)
+      const respuesta = await fetch(archivo.uri);
+      const textoTXT = await respuesta.text();
 
-      if (Platform.OS === 'web') {
-        // En web, el archivo tiene una URI tipo blob:// o data://
-        const respuesta = await fetch(archivo.uri);
-        textoCSV = await respuesta.text();
-      } else {
-        // En móvil, usamos fetch() también — Expo lo maneja con la URI local
-        const respuesta = await fetch(archivo.uri);
-        textoCSV = await respuesta.text();
-      }
-
-      // --- PASO 3: Parsear el CSV ---
+      // --- PASO 3: Obtener el usuario autenticado ---
       setEstado('procesando');
 
-      const filas = parsearCSVBancoChile(textoCSV);
-
-      if (filas.length === 0) {
-        throw new Error(
-          'No se encontraron transacciones válidas en el archivo. ' +
-          'Asegúrate de exportar la cartola en formato CSV desde la banca en línea.'
-        );
-      }
-
-      // --- PASO 4: Obtener el usuario autenticado ---
       const { data: { user }, error: errorAuth } = await supabase.auth.getUser();
 
       if (errorAuth || !user) {
         throw new Error('No hay sesión activa. Por favor inicia sesión nuevamente.');
       }
 
-      // --- PASO 5: Convertir filas a formato Supabase ---
-      const transacciones = csvRowsATransacciones(filas, user.id);
+      // --- PASO 4: Parsear el TXT ---
+      // Le pasamos el userId directamente al parser para que construya las transacciones
+      const transacciones = parsearTXTBancoChile(textoTXT, user.id);
 
-      // --- PASO 6: Importar a Supabase ---
+      if (transacciones.length === 0) {
+        throw new Error(
+          'No se encontraron transacciones válidas en el archivo. ' +
+          'Asegúrate de descargar la cartola en formato TXT desde la banca en línea.'
+        );
+      }
+
+      // --- PASO 5: Importar a Supabase ---
       // Pasamos el callback de progreso para actualizar la barra
       const resultadoFinal = await importarTransacciones(
         transacciones,
         (porcentaje) => setProgreso(porcentaje)
       );
 
-      // --- PASO 7: Mostrar resultado ---
+      // --- PASO 6: Mostrar resultado ---
       setResultado(resultadoFinal);
       setEstado('exito');
 
@@ -132,7 +120,7 @@ export default function CSVImporter() {
     <View style={estilos.contenedor}>
       <Text style={estilos.titulo}>Importar Cartola</Text>
       <Text style={estilos.subtitulo}>
-        Exporta tu cartola desde la banca en línea del Banco de Chile en formato CSV
+        Descarga tu cartola desde la banca en línea del Banco de Chile en formato TXT
       </Text>
 
       {/* Estado: listo para importar */}
@@ -142,7 +130,7 @@ export default function CSVImporter() {
           onPress={manejarImportacion}
           activeOpacity={0.8}
         >
-          <Text style={estilos.textoBoton}>📂 Seleccionar archivo CSV</Text>
+          <Text style={estilos.textoBoton}>📂 Seleccionar archivo TXT</Text>
         </TouchableOpacity>
       )}
 
@@ -214,7 +202,6 @@ export default function CSVImporter() {
 }
 
 // Componente auxiliar para las filas del resumen
-// Lo definimos aquí porque solo se usa en este archivo
 function FilaResumen({
   etiqueta,
   valor,
@@ -232,20 +219,16 @@ function FilaResumen({
   );
 }
 
-// Estilos — React Native usa StyleSheet en vez de CSS
-// Los nombres de propiedades son camelCase (backgroundColor, no background-color)
 const estilos = StyleSheet.create({
   contenedor: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 24,
     margin: 16,
-    // Sombra en iOS
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.08,
     shadowRadius: 8,
-    // Sombra en Android
     elevation: 3,
   },
   titulo: {

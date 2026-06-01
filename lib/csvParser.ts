@@ -1,119 +1,74 @@
-// Parser de cartola CSV del Banco de Chile
-// El formato del banco es: Fecha;Descripción;Cargo;Abono;Saldo
-// Separador: punto y coma (;)
-// Números: sin puntos de miles, sin símbolo $
+// Parser de cartola TXT del Banco de Chile
+// Formato: archivo de ancho fijo, 121 caracteres por línea
+// Cada línea codifica: fecha + monto + tipo (A/C) + descripción
+// Tipo A = Abono (ingreso), Tipo C = Cargo (gasto)
 
-import { CSVRow, TransaccionParaGuardar } from '../types';
+import { TransaccionParaGuardar } from '../types';
 
-// Convierte una fecha en formato "DD/MM/YYYY" al formato ISO "YYYY-MM-DD"
-// Supabase espera fechas en formato ISO para ordenarlas correctamente
+// Líneas que NO son transacciones reales — las filtramos
+const LINEAS_A_IGNORAR = [
+  'SALDO CONTABLE',
+  'RETENCIONES',
+];
+
+// Convierte fecha YYYYMMDD → formato ISO "YYYY-MM-DD"
+// Supabase requiere fechas en formato ISO para ordenarlas correctamente
 function convertirFecha(fechaBanco: string): string {
-  const [dia, mes, anio] = fechaBanco.split('/');
+  const anio = fechaBanco.slice(0, 4);
+  const mes = fechaBanco.slice(4, 6);
+  const dia = fechaBanco.slice(6, 8);
   return `${anio}-${mes}-${dia}`;
 }
 
-// Convierte un string de número del banco a número real
-// El banco usa "25990" → 25990 (sin puntos, sin comas, sin símbolo)
-// Si la celda está vacía (caso de abono cuando hay cargo), devuelve null
-function convertirMonto(monto: string): number | null {
-  const limpio = monto.trim();
-  if (!limpio) return null;
-  // Eliminamos puntos de miles por si acaso (algunos extractos los incluyen)
-  const numero = parseFloat(limpio.replace(/\./g, '').replace(',', '.'));
-  return isNaN(numero) ? null : numero;
-}
-
-// Función principal: recibe el texto completo del CSV y devuelve filas parseadas
-// Separamos el parsing del CSV (esta función) de guardar en Supabase (importService)
-// para poder testear el parser de forma independiente
-export function parsearCSVBancoChile(textoCSV: string): CSVRow[] {
-  const lineas = textoCSV
-    .split('\n')                  // separar por líneas
-    .map(l => l.trim())           // quitar espacios y \r (Windows usa \r\n)
-    .filter(l => l.length > 0);  // eliminar líneas vacías
-
-  if (lineas.length === 0) {
-    throw new Error('El archivo CSV está vacío');
-  }
-
-  // Detectar si la primera línea es el encabezado
-  // La cabecera contiene "Fecha" o "fecha" — si no, asumimos que no hay header
-  const primeraLinea = lineas[0].toLowerCase();
-  const tieneHeader = primeraLinea.includes('fecha') || primeraLinea.includes('descripci');
-  const lineasDatos = tieneHeader ? lineas.slice(1) : lineas;
-
-  if (lineasDatos.length === 0) {
-    throw new Error('El CSV solo tiene encabezado, sin transacciones');
-  }
-
-  const filas: CSVRow[] = [];
-
-  for (const linea of lineasDatos) {
-    // Separar por punto y coma — el delimitador del Banco de Chile
-    const columnas = linea.split(';');
-
-    // El CSV tiene 5 columnas: Fecha, Descripción, Cargo, Abono, Saldo
-    if (columnas.length < 5) {
-      // Línea malformada — la saltamos silenciosamente
-      // (puede ser un subtotal o línea de resumen al final del archivo)
-      continue;
-    }
-
-    const [fecha, descripcion, cargoStr, abonoStr, saldoStr] = columnas;
-
-    const cargo = convertirMonto(cargoStr);
-    const abono = convertirMonto(abonoStr);
-    const saldo = convertirMonto(saldoStr);
-
-    // Si no hay ni cargo ni abono, la línea no tiene monto — ignorar
-    if (cargo === null && abono === null) continue;
-    // Si no pudimos parsear el saldo, algo está mal con la línea
-    if (saldo === null) continue;
-
-    filas.push({
-      fecha: fecha.trim(),
-      descripcion: descripcion.trim(),
-      cargo,
-      abono,
-      saldo,
-    });
-  }
-
-  return filas;
-}
-
-// Convierte filas CSV al formato que espera Supabase
-// Recibe el userId del usuario autenticado para asociar las transacciones
-export function csvRowsATransacciones(
-  filas: CSVRow[],
+// Función principal: recibe el texto completo del TXT y devuelve transacciones listas para Supabase
+// El formato del banco es de ancho fijo — cada dato ocupa posiciones exactas en la línea
+// Usamos '+000' como ancla para ubicar el monto y la descripción
+export function parsearTXTBancoChile(
+  textoTXT: string,
   userId: string
 ): TransaccionParaGuardar[] {
+  const lineas = textoTXT
+    .split('\n')
+    .map(l => l.trimEnd())     // quitar espacios y \r al final
+    .filter(l => l.length >= 100); // líneas válidas tienen ~121 chars
+
+  if (lineas.length === 0) {
+    throw new Error('El archivo no contiene transacciones válidas.');
+  }
+
   const transacciones: TransaccionParaGuardar[] = [];
 
-  for (const fila of filas) {
-    if (fila.cargo !== null && fila.cargo > 0) {
-      // Es un gasto (cargo)
-      transacciones.push({
-        user_id: userId,
-        category_id: null,         // sin categoría por ahora
-        amount: fila.cargo,
-        note: fila.descripcion,
-        date: convertirFecha(fila.fecha),
-        type: 'expense',
-        source: 'csv',
-      });
-    } else if (fila.abono !== null && fila.abono > 0) {
-      // Es un ingreso (abono)
-      transacciones.push({
-        user_id: userId,
-        category_id: null,
-        amount: fila.abono,
-        note: fila.descripcion,
-        date: convertirFecha(fila.fecha),
-        type: 'income',
-        source: 'csv',
-      });
-    }
+  for (const linea of lineas) {
+    // '+000' es el ancla del formato — siempre aparece entre el monto y la descripción
+    const idx = linea.indexOf('+000');
+    if (idx === -1) continue;
+
+    // Monto: 14 dígitos justo antes de '+000', sin ceros a la izquierda
+    const montoRaw = linea.slice(idx - 14, idx).replace(/^0+/, '');
+    const monto = parseInt(montoRaw, 10);
+    if (isNaN(monto) || monto === 0) continue;
+
+    // Descripción y tipo: todo después de '+000', quitando los últimos 13 chars (fecha de proceso)
+    const bloqueDesc = linea.slice(idx + 4, -13);
+    const tipo = bloqueDesc.trimEnd().slice(-1); // último char del bloque: 'A' o 'C'
+    const descripcion = bloqueDesc.trimEnd().slice(0, -1).trim();
+
+    // Ignorar líneas de saldo y retenciones — no son transacciones reales
+    if (LINEAS_A_IGNORAR.some(ignorar => descripcion.includes(ignorar))) continue;
+    if (tipo !== 'A' && tipo !== 'C') continue;
+
+    // Fecha de operación: posiciones 11–19 en la línea (formato YYYYMMDD)
+    const fecha = convertirFecha(linea.slice(11, 19));
+
+    transacciones.push({
+      user_id: userId,
+      category_id: null,  // sin categoría por ahora — se asigna en V2 con IA
+      amount: monto,
+      note: descripcion,
+      date: fecha,
+      type: tipo === 'A' ? 'income' : 'expense',
+      source: 'csv',
+    });
   }
 
   return transacciones;
