@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import { useTransactions } from '../../hooks/useTransactions';
 import type { GastoPorCategoria, TransaccionConCategoria } from '../../hooks/useTransactions';
+import SyncButton from '../../components/SyncButton';
 
 // ─── Utilidades de formato ────────────────────────────────────────────────────
 
@@ -267,6 +268,8 @@ export default function HomeScreen() {
           enSiguiente={irSiguiente}
           puedeIrSiguiente={puedeIrSiguiente}
         />
+
+        <SyncButton onSincronizado={refrescar} />
 
         <GraficoGastos datos={gastosPorCategoria} />
 

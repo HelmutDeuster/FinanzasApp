@@ -20,7 +20,7 @@ export interface TransaccionParaGuardar {
   note: string;               // descripción del banco
   date: string;               // formato ISO: "2025-04-15"
   type: 'income' | 'expense'; // abono = income, cargo = expense
-  source: 'csv';              // siempre 'csv' en este importador
+  source: 'manual' | 'csv' | 'txt' | 'open-banking';
 }
 
 // El resultado que devuelve el importador al terminar
