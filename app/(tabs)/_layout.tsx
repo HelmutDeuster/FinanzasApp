@@ -19,6 +19,10 @@ function IconoProyeccion({ color }: { color: string }) {
   return <Text style={{ color, fontSize: 18, lineHeight: 24 }}>◎</Text>;
 }
 
+function IconoAjustes({ color }: { color: string }) {
+  return <Text style={{ color, fontSize: 18, lineHeight: 24 }}>⚙</Text>;
+}
+
 export default function TabsLayout() {
   return (
     <Tabs
@@ -59,6 +63,13 @@ export default function TabsLayout() {
         options={{
           title: 'Proyección',
           tabBarIcon: ({ color }) => <IconoProyeccion color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="ajustes"
+        options={{
+          title: 'Ajustes',
+          tabBarIcon: ({ color }) => <IconoAjustes color={color} />,
         }}
       />
     </Tabs>
