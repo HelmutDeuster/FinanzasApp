@@ -21,8 +21,12 @@ export function useDetalleTarjeta(tarjetaId: string) {
   const [tarjeta, setTarjeta]             = useState<CreditCard | null>(null);
   const [transacciones, setTransacciones] = useState<TransaccionDetalle[]>([]);
   const [cicloOffset, setCicloOffset]     = useState(0);
+  const [refreshKey, setRefreshKey]       = useState(0);
   const [loading, setLoading]             = useState(true);
   const [error, setError]                 = useState<string | null>(null);
+
+  // Pide al efecto de carga que se ejecute de nuevo sin cambiar el ciclo
+  function recargar() { setRefreshKey(k => k + 1); }
 
   // Efecto 1: carga la tarjeta una sola vez al montar
   useEffect(() => {
@@ -85,7 +89,7 @@ export function useDetalleTarjeta(tarjetaId: string) {
 
     cargarTransacciones();
     return () => { activo = false; };
-  }, [tarjeta, cicloOffset]);
+  }, [tarjeta, cicloOffset, refreshKey]);
 
   // Totales derivados en render (sin useEffect extra)
   const { totalNeto, totalBruto } = transacciones.reduce(
@@ -123,5 +127,6 @@ export function useDetalleTarjeta(tarjetaId: string) {
     cicloLabel,
     loading,
     error,
+    recargar,
   };
 }

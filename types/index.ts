@@ -15,6 +15,12 @@ export interface CSVRow {
 // Permite distinguir cuenta corriente de tarjetas en Modo Tarjeta del Home
 export type BankSource = 'account' | 'credit_card_unbilled' | 'credit_card_billed';
 
+// Propietario de un gasto: solo mío, compartido o 100% de otro
+export type SplitOwner = 'me' | 'split' | 'other';
+
+// Cómo se calcula la parte de cada uno en un split
+export type SplitModo = 'porcentaje' | 'monto';
+
 // Una transacción lista para guardar en Supabase
 // Mapea a la tabla `transactions` que creamos en Sesión 01
 export interface TransaccionParaGuardar {
@@ -26,7 +32,7 @@ export interface TransaccionParaGuardar {
   type: 'income' | 'expense';
   source: 'manual' | 'csv' | 'txt' | 'open-banking';
   bank_source?: BankSource | null;              // null para TXT; seteado por open-banking
-  owner?: 'me' | 'split' | 'other';            // para splits; null = 'me'
+  owner?: SplitOwner;                           // para splits; null = 'me'
   split_amount?: number | null;
   split_person?: string | null;
 }

@@ -1,14 +1,18 @@
-// app/(tabs)/tarjeta/[id].tsx
+// app/tarjeta/[id].tsx
 // Pantalla de detalle de tarjeta — transacciones del ciclo activo o ciclos pasados.
+// Vive en el root Stack (fuera del grupo tabs) para que la barra de tabs
+// no aparezca en esta pantalla de detalle.
 
 import {
   View, Text, ScrollView, StyleSheet,
   ActivityIndicator, TouchableOpacity,
 } from 'react-native';
+import { useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
-import { useDetalleTarjeta } from '../../../hooks/useDetalleTarjeta';
-import type { TransaccionDetalle } from '../../../hooks/useDetalleTarjeta';
+import { useDetalleTarjeta } from '../../hooks/useDetalleTarjeta';
+import type { TransaccionDetalle } from '../../hooks/useDetalleTarjeta';
+import { DetalleTransaccion } from '../../components/DetalleTransaccion';
 
 // ─── Utilidades ───────────────────────────────────────────────────────────────
 
@@ -24,12 +28,12 @@ function formatearFecha(iso: string): string {
 
 // ─── Fila de transacción ──────────────────────────────────────────────────────
 
-function FilaTx({ tx }: { tx: TransaccionDetalle }) {
+function FilaTx({ tx, onPress }: { tx: TransaccionDetalle; onPress: () => void }) {
   const esOther = tx.owner === 'other';
   const esSplit = tx.owner === 'split';
 
   return (
-    <View style={estilos.filaTx}>
+    <TouchableOpacity style={estilos.filaTx} onPress={onPress} activeOpacity={0.7}>
       <View style={estilos.filaTxIzq}>
         <View style={estilos.filaTxFila}>
           <Text
@@ -59,7 +63,7 @@ function FilaTx({ tx }: { tx: TransaccionDetalle }) {
       <Text style={[estilos.txMonto, esOther && estilos.txMontoTachado]}>
         {formatearMonto(tx.amount)}
       </Text>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -79,7 +83,11 @@ export default function DetalleTarjetaScreen() {
     cicloLabel,
     loading,
     error,
+    recargar,
   } = useDetalleTarjeta(id ?? '');
+
+  // Transacción seleccionada al tocar una fila — null significa modal cerrado
+  const [txSeleccionada, setTxSeleccionada] = useState<TransaccionDetalle | null>(null);
 
   const nombreTarjeta = tarjeta
     ? (tarjeta.last_four ? `${tarjeta.name} ****${tarjeta.last_four}` : tarjeta.name)
@@ -135,7 +143,7 @@ export default function DetalleTarjetaScreen() {
           </View>
 
           {/* ── Stats ──────────────────────────────────────────────── */}
-          <View style={estilos.tarjeta}>
+          <View style={estilos.card}>
             <View style={estilos.statsRow}>
               <View style={estilos.statBloque}>
                 <Text style={estilos.statLabel}>Tu parte</Text>
@@ -156,17 +164,31 @@ export default function DetalleTarjetaScreen() {
           </View>
 
           {/* ── Lista de transacciones ──────────────────────────────── */}
-          <View style={estilos.tarjeta}>
+          <View style={estilos.card}>
             <Text style={estilos.tituloSeccion}>Transacciones</Text>
             {transacciones.length === 0 ? (
               <Text style={estilos.textoVacio}>Sin transacciones en este ciclo</Text>
             ) : (
-              transacciones.map(tx => <FilaTx key={tx.id} tx={tx} />)
+              transacciones.map(tx => (
+                <FilaTx
+                  key={tx.id}
+                  tx={tx}
+                  onPress={() => setTxSeleccionada(tx)}
+                />
+              ))
             )}
           </View>
 
         </ScrollView>
       )}
+
+      {/* Modal de split — visible cuando hay una transacción seleccionada */}
+      <DetalleTransaccion
+        transaccion={txSeleccionada}
+        visible={txSeleccionada !== null}
+        onCerrar={() => setTxSeleccionada(null)}
+        onGuardado={recargar}
+      />
     </SafeAreaView>
   );
 }
@@ -216,8 +238,8 @@ const estilos = StyleSheet.create({
   statMontoSecundario: { color: '#6B6A66', fontSize: 18 },
   statDivisor:         { width: 1, height: 40, backgroundColor: '#2A2D38' },
 
-  // Tarjeta contenedor
-  tarjeta: {
+  // Card contenedor
+  card: {
     backgroundColor: '#181B24',
     borderWidth: 0.5,
     borderColor: '#2A2D38',
