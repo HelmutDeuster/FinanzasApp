@@ -20,10 +20,12 @@ import {
   StyleSheet,
   ActivityIndicator,
   TouchableOpacity,
+  Pressable,
   useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
+import { router } from 'expo-router';
 import { useTransactions } from '../../hooks/useTransactions';
 import type { GastoPorCategoria, TransaccionConCategoria } from '../../hooks/useTransactions';
 import { useUserSettings } from '../../hooks/useUserSettings';
@@ -339,12 +341,17 @@ function ModoTarjeta({
                 {cardsSorted.map(card => {
                   const spend = dadosTC?.spendPorTarjeta.find(s => s.cardId === card.id);
                   return (
-                    <CardCreditCard
+                    <Pressable
                       key={card.id}
-                      card={card}
-                      spendNeto={spend?.neto ?? 0}
-                      isDesktop={isDesktop}
-                    />
+                      onPress={() => router.push(`/tarjeta/${card.id}`)}
+                      style={isDesktop ? { flex: 1 } : undefined}
+                    >
+                      <CardCreditCard
+                        card={card}
+                        spendNeto={spend?.neto ?? 0}
+                        isDesktop={isDesktop}
+                      />
+                    </Pressable>
                   );
                 })}
               </View>

@@ -12,7 +12,7 @@
 // Ejemplo con closeDay=23:
 //   Hoy 10 jun → ciclo 24 may → 23 jun
 //   Hoy 25 jun → ciclo 24 jun → 23 jul
-export function getCycleRange(closeDay: number): { start: Date; end: Date } {
+export function getCycleRange(closeDay: number, offset: number = 0): { start: Date; end: Date } {
   const today = new Date();
   const currentDay = today.getDate();
 
@@ -21,6 +21,11 @@ export function getCycleRange(closeDay: number): { start: Date; end: Date } {
     cycleEnd = new Date(today.getFullYear(), today.getMonth(), closeDay);
   } else {
     cycleEnd = new Date(today.getFullYear(), today.getMonth() + 1, closeDay);
+  }
+
+  // Desplazar el cierre según el offset (JS resuelve desbordamiento de meses automáticamente)
+  if (offset !== 0) {
+    cycleEnd = new Date(cycleEnd.getFullYear(), cycleEnd.getMonth() + offset, closeDay);
   }
 
   // El inicio es el día siguiente al cierre, del mes anterior al cierre
@@ -45,6 +50,9 @@ export function formatearRangoCiclo(start: Date, end: Date): string {
   return `${formatearFechaCiclo(start)} → ${formatearFechaCiclo(end)}`;
 }
 
+// Alias en inglés
+export const formatCycleLabel = formatearRangoCiclo;
+
 // ─── Progreso del ciclo ───────────────────────────────────────────────────────
 // Devuelve un número entre 0 y 100 indicando qué porcentaje del ciclo ha transcurrido.
 // Útil para la barra temporal del Home.
@@ -61,6 +69,9 @@ export function diasRestantes(end: Date): number {
   const diff = end.getTime() - now.getTime();
   return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
 }
+
+// Alias descriptivo
+export const diasHastaCierre = diasRestantes;
 
 // ─── Conversión de rango a strings ISO para queries Supabase ─────────────────
 export function cicloAIso(start: Date, end: Date): { startISO: string; endISO: string } {
