@@ -32,6 +32,12 @@ function construirNota(mov: BankMovement): string {
 // ─── Conversión de movimientos ────────────────────────────────────────────────
 // Convierte el formato del banco al formato de TransaccionParaGuardar.
 // No incluye user_id — lo añade el cliente al recibir la respuesta del servidor.
+//
+// bank_source mapea el campo 'source' de open-banking-chile a nuestra columna
+// homónima, que distingue cuenta corriente de tarjeta de crédito:
+//   'account'               → cuenta corriente/vista
+//   'credit_card_unbilled'  → tarjeta no facturada (ciclo abierto)
+//   'credit_card_billed'    → tarjeta facturada
 function convertirMovimiento(
   mov: BankMovement
 ): Omit<TransaccionParaGuardar, 'user_id'> {
@@ -43,6 +49,7 @@ function convertirMovimiento(
     note: construirNota(mov),
     date: convertirFecha(mov.date),
     source: 'open-banking',
+    bank_source: mov.source, // 'account' | 'credit_card_unbilled' | 'credit_card_billed'
   };
 }
 

@@ -1,7 +1,7 @@
 // components/SyncButton.tsx
 // Botón de sincronización con Banco de Chile.
 // Cuatro estados: idle → sincronizando → éxito → error
-// El estado "sincronizando" avisa que puede tardar ~30-60s (Chrome scraping).
+// Estilo discreto para modo oscuro — no es un CTA prominente.
 
 import React, { useState } from 'react';
 import {
@@ -17,7 +17,6 @@ import type { ResultadoImportacion } from '../types';
 type EstadoSync = 'idle' | 'sincronizando' | 'exito' | 'error';
 
 interface Props {
-  // Callback para que la pantalla Home refresque la lista al terminar
   onSincronizado?: () => void;
 }
 
@@ -35,7 +34,6 @@ export default function SyncButton({ onSincronizado }: Props) {
       const res = await sincronizar();
       setResultado(res);
       setEstado('exito');
-      // Notificar al padre para que recargue transacciones
       onSincronizado?.();
     } catch (error) {
       const mensaje =
@@ -54,31 +52,29 @@ export default function SyncButton({ onSincronizado }: Props) {
   return (
     <View style={estilos.contenedor}>
 
-      {/* ── Estado: listo ─────────────────────────────────────────────── */}
+      {/* ── Listo ────────────────────────────────────────────────────── */}
       {estado === 'idle' && (
         <TouchableOpacity
           style={estilos.boton}
           onPress={manejarSync}
-          activeOpacity={0.8}
+          activeOpacity={0.7}
         >
-          <Text style={estilos.botonTexto}>↻  Sincronizar con banco</Text>
+          <Text style={estilos.botonTexto}>↻  Sincronizar</Text>
         </TouchableOpacity>
       )}
 
-      {/* ── Estado: sincronizando ──────────────────────────────────────── */}
+      {/* ── Sincronizando ─────────────────────────────────────────────── */}
       {estado === 'sincronizando' && (
         <View style={estilos.filaEstado}>
-          <ActivityIndicator color="#2563EB" size="small" />
+          <ActivityIndicator color="#378ADD" size="small" />
           <View style={estilos.textoEstadoContenedor}>
             <Text style={estilos.estadoTitulo}>Sincronizando...</Text>
-            <Text style={estilos.estadoSubtitulo}>
-              Puede tardar 30–60 segundos (abre Chrome)
-            </Text>
+            <Text style={estilos.estadoSubtitulo}>Puede tardar 30–60 s</Text>
           </View>
         </View>
       )}
 
-      {/* ── Estado: éxito ─────────────────────────────────────────────── */}
+      {/* ── Éxito ────────────────────────────────────────────────────── */}
       {estado === 'exito' && resultado && (
         <View style={estilos.filaEstado}>
           <Text style={estilos.exitoIcono}>✓</Text>
@@ -91,7 +87,7 @@ export default function SyncButton({ onSincronizado }: Props) {
         </View>
       )}
 
-      {/* ── Estado: error ─────────────────────────────────────────────── */}
+      {/* ── Error ────────────────────────────────────────────────────── */}
       {estado === 'error' && (
         <View style={estilos.errorContenedor}>
           <Text style={estilos.errorTexto} numberOfLines={3}>
@@ -109,84 +105,81 @@ export default function SyncButton({ onSincronizado }: Props) {
 
 const estilos = StyleSheet.create({
   contenedor: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 16,
-    marginHorizontal: 16,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 2,
+    backgroundColor: '#181B24',
+    borderWidth: 0.5,
+    borderColor: '#2A2D38',
+    borderRadius: 10,
+    padding: 10,
   },
 
-  // Botón principal (estado idle)
+  // Botón idle: discreto, no es un CTA azul
   boton: {
-    backgroundColor: '#2563EB',
-    borderRadius: 10,
-    paddingVertical: 13,
+    borderWidth: 0.5,
+    borderColor: '#2A2D38',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
     alignItems: 'center',
   },
   botonTexto: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '600',
+    color: '#4A4D5A',
+    fontSize: 13,
+    fontWeight: '500',
   },
 
-  // Fila horizontal compartida por sincronizando y éxito
+  // Fila compartida por sincronizando y éxito
   filaEstado: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
   },
   textoEstadoContenedor: {
     flex: 1,
   },
   estadoTitulo: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#1F2937',
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#6B6A66',
   },
   estadoSubtitulo: {
-    fontSize: 12,
-    color: '#9CA3AF',
+    fontSize: 11,
+    color: '#4A4D5A',
     marginTop: 2,
   },
 
   // Éxito
   exitoIcono: {
-    fontSize: 18,
-    color: '#059669',
+    fontSize: 16,
+    color: '#639922',
     fontWeight: '700',
   },
   exitoTexto: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#059669',
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#639922',
     flex: 1,
   },
 
   // Error
   errorContenedor: {
-    gap: 10,
+    gap: 8,
   },
   errorTexto: {
-    fontSize: 13,
-    color: '#DC2626',
+    fontSize: 12,
+    color: '#E24B4A',
     lineHeight: 18,
   },
 
-  // Botón pequeño (OK / Reintentar)
+  // Botón secundario (OK / Reintentar)
   botonChico: {
-    backgroundColor: '#F3F4F6',
-    borderRadius: 8,
-    paddingVertical: 6,
-    paddingHorizontal: 14,
+    backgroundColor: '#2A2D38',
+    borderRadius: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 12,
   },
   botonChicoTexto: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#374151',
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#6B6A66',
   },
 });

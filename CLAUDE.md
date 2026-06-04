@@ -3,103 +3,227 @@
 App de finanzas personales para web y móvil. Proyecto de portafolio.
 Usuario en Chile, banco: Banco de Chile.
 Integración bancaria vía open-banking-chile (scraper local, gratis).
+Versión comercial futura vía Fintoc (V3).
+
+---
 
 ## Stack
-- React Native + Expo SDK 56 + TypeScript
-- Supabase local (Docker) — auth + PostgreSQL
-- Victory Native (gráficas)
-- expo-document-picker (selector de archivos)
-- open-banking-chile (scraper local) — cuenta corriente + tarjetas de crédito
-- Express (servidor local puerto 3001) — puente entre la app y el scraper
 
-## Estructura de carpetas
-/app          → pantallas (Expo Router)
-/components   → CSVImporter.tsx, SyncButton.tsx
-/lib          → supabase.ts, csvParser.ts, importService.ts, syncService.ts
-/hooks        → useTransactions.ts
-/types        → index.ts con tipos globales
-/server       → syncServer.ts, bchileSync.ts (servidor local Node.js)
+| Tecnología | Rol | Fase |
+|---|---|---|
+| React Native + Expo SDK 56 | Frontend iOS, Android y web desde un solo código | MVP |
+| TypeScript (modo estricto) | Tipado en todo el proyecto | MVP |
+| Supabase (local con Docker) | Base de datos PostgreSQL + auth | MVP |
+| expo-document-picker | Selector de archivos nativo | MVP |
+| Victory Native | Gráficas (donut, barras, líneas) | MVP |
+| open-banking-chile | Scraper cuenta corriente + tarjetas de crédito | MVP |
+| Express (puerto 3001) | Servidor local — puente entre la app y el scraper | MVP |
+| Claude Code (claude-opus-4-7) | Agente en terminal para codificación | MVP |
+| GitHub + Git | Control de versiones y portafolio público | MVP |
+| Claude API | Categorización automática con IA | V3 |
+| Fintoc | Open banking regulado — versión comercial | V3 |
+| Expo EAS | Build y publicación en App Store / Play Store | V3 |
 
-## Base de datos — tablas en Supabase
-- categories: id, name, icon, color, type ('income'|'expense')
-- transactions: id, user_id, category_id, amount, note, date, type
-  ('income'|'expense'), source ('manual'|'txt'|'open-banking')
-- budgets: id, user_id, category_id, amount, month
-- goals: id, user_id, name, target_amount, current_amount, deadline
+---
 
-## Estado actual (Sesión 04 completada)
-- Auth completa funcionando (registro, login, logout)
-- Importador TXT del Banco de Chile funcionando (CSVImporter.tsx)
-- 51 transacciones reales en Supabase
-- Pantalla Home completa: balance del mes, lista de transacciones,
-  donut chart, selector de mes ← →
-- Sincronización automática implementada:
-  - server/bchileSync.ts — adaptador para open-banking-chile v2.1.2
-  - server/syncServer.ts — Express en 127.0.0.1:3001
-  - lib/syncService.ts — cliente desde la app
-  - components/SyncButton.tsx — botón con 4 estados
-- Próximo paso: agregar SyncButton a la pantalla Home y probar sincronización real
+## Convenciones de código
 
-## Integración open-banking-chile
-El scraper corre localmente en el Mac del usuario con Chrome.
-Soporta para bchile:
-- checking → cuenta corriente/vista
-- credit_card_unbilled → tarjeta de crédito por facturar
-- credit_card_billed → tarjeta de crédito facturada
-- Incluye cuotas (campo installments: "02/06" = cuota 2 de 6)
+- **TypeScript estricto** — no usar `any`, no ignorar errores de tipos
+- **Comentarios en español** — siempre
+- **Componentes en PascalCase** — `HomeScreen`, `CSVImporter`, `SyncButton`
+- **Custom hooks con prefijo `use`** — `useTransactions`, `useAuth`
+- **Commits en español** — descripción clara de lo que se hizo
+- **`npx expo install`** para nuevas dependencias (no `npm install`) — garantiza compatibilidad con Expo SDK 56
+- **`--legacy-peer-deps`** si hay conflictos de pares entre React 19 y otras librerías
 
-Credenciales en .env.local (NUNCA en el código):
-  BANCOCHILE_RUT=12345678-9
-  BANCOCHILE_PASS=tu_clave
+---
 
-El servidor local (server/syncServer.ts) expone POST /sync en puerto 3001.
-La app llama a este endpoint vía lib/syncService.ts.
+## Estructura del proyecto
 
-## Seguridad — reglas estrictas
-- NUNCA imprimir, loguear ni exponer BANCOCHILE_RUT o BANCOCHILE_PASS
-- NUNCA incluir credenciales en commits (.env.local está en .gitignore)
-- NUNCA enviar credenciales fuera del servidor local
-- Si hay error de autenticación, mostrar mensaje genérico al usuario
-- El servidor solo escucha en 127.0.0.1, nunca en 0.0.0.0
-- Verificar .gitignore antes de hacer commit
+```
+~/proyectos/FinanzasApp/
+├── dev/                          ← código de la app (va a GitHub)
+│   ├── app/
+│   │   ├── (auth)/
+│   │   │   └── login.tsx         ← pantalla login/registro ✓
+│   │   ├── (tabs)/
+│   │   │   └── home.tsx          ← pantalla principal ✓
+│   │   ├── _layout.tsx           ← portero de navegación ✓
+│   │   └── index.tsx             ← punto de entrada ✓
+│   ├── components/
+│   │   ├── CSVImporter.tsx       ← importador TXT del banco ✓
+│   │   └── SyncButton.tsx        ← botón sincronización open-banking ✓
+│   ├── hooks/
+│   │   └── useTransactions.ts    ← custom hook transacciones ✓
+│   ├── lib/
+│   │   ├── supabase.ts           ← cliente Supabase ✓
+│   │   ├── csvParser.ts          ← parser TXT Banco de Chile ✓
+│   │   ├── importService.ts      ← guardado en Supabase ✓
+│   │   └── syncService.ts        ← cliente del servidor Express ✓
+│   ├── server/
+│   │   ├── syncServer.ts         ← servidor Express (puerto 3001) ✓
+│   │   └── bchileSync.ts         ← lógica open-banking-chile ✓
+│   ├── types/
+│   │   └── index.ts              ← tipos globales TypeScript ✓
+│   ├── supabase/                 ← configuración Supabase local ✓
+│   ├── CLAUDE.md                 ← este archivo ✓
+│   └── .env.local                ← credenciales (NO va a GitHub) ✓
+└── docs/
+    ├── FinanzasApp_Plan_Maestro.md
+    ├── FinanzasApp_UXUI.md
+    ├── manual_desarrollo.md
+    └── credenciales.txt          ← claves Supabase local
+```
 
-## Mejoras al scraper — detectar y proponer siempre
-Si al trabajar con open-banking-chile detectas:
-- Campos del JSON no usados pero útiles (cuotas, saldo, máscara tarjeta)
-- Errores o comportamientos que podrían manejarse mejor
-- Patrones de datos que permitan mejor categorización automática
-- Oportunidades para hacer el scraping más robusto
-→ Proponer la mejora con justificación antes de implementarla
+---
 
-## Convenciones
-- TypeScript estricto — nunca usar 'any'
-- Comentarios en español
-- Componentes en PascalCase
-- Hooks con prefijo "use"
-- Commits en español y descriptivos
+## Base de datos (Supabase local)
 
-## Formato cartola Banco de Chile (TXT)
-Ancho fijo posicional. Parser en lib/csvParser.ts.
-Tipo A = Abono (income), C = Cargo (expense).
-Mantener compatibilidad — el importador TXT coexiste con open-banking.
+### Tablas
 
-## Comandos útiles
-npx expo start --web              → correr app en navegador
-supabase start                    → arrancar BD local
-supabase stop                     → detener BD local
-npx expo install [pkg]            → instalar paquete compatible con Expo SDK 56
-npx ts-node server/syncServer.ts  → arrancar servidor de sincronización
+```sql
+-- Categorías de gastos e ingresos
+categories: id, name, icon, color, type ('income' | 'expense')
 
-## API de open-banking-chile (v2.1.2)
-El scraper expone un objeto `bchile` con método `scrape(options: ScraperOptions)`.
-- `options.rut`: RUT con o sin formato ("12345678-9" o "123456789")
-- `options.password`: clave de internet
-- `options.onProgress`: callback (paso: string) para logging
-- Resultado `ScrapeResult.movements`: array de `BankMovement`
-  - `date`: "dd-mm-yyyy" (convertir a ISO para Supabase)
-  - `amount`: positivo = abono, negativo = cargo
-  - `source`: "account" | "credit_card_unbilled" | "credit_card_billed"
-  - `installments`: "02/06" o undefined — codificar en la nota "[cuota 2/6]"
-  - `balance`: saldo post-transacción (no se guarda en BD por ahora)
-- Si `ScrapeResult.success === false`, revisar `error` para detectar AUTH_ERROR
-- Si el banco pide 2FA, el scraper lee de stdin (la terminal del servidor)
+-- Transacciones del usuario
+transactions: id, user_id, category_id, amount, note, date, type,
+              source ('manual' | 'txt' | 'open-banking')
+
+-- Presupuestos mensuales
+budgets: id, user_id, category_id, amount, month
+
+-- Metas de ahorro
+goals: id, user_id, name, target_amount, current_amount, deadline
+```
+
+### RLS activado en
+`transactions`, `budgets`, `goals` — cada usuario solo ve sus propios datos.
+
+### Categorías iniciales
+Supermercado, Transporte, Restaurantes, Salud, Entretenimiento, Servicios, Sueldo, Otros ingresos.
+
+### Campo `source` en transactions
+
+| Valor | Cuándo se usa |
+|---|---|
+| `'manual'` | Ingreso manual por el usuario |
+| `'txt'` | Importado desde el archivo TXT del banco |
+| `'open-banking'` | Sincronizado con open-banking-chile |
+
+### Credenciales locales
+
+| Campo | Valor |
+|---|---|
+| Project URL | http://127.0.0.1:54321 |
+| Studio | http://127.0.0.1:54323 |
+| Base de datos | postgresql://postgres:postgres@127.0.0.1:54322/postgres |
+
+---
+
+## Variables de entorno (.env.local)
+
+```bash
+EXPO_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+EXPO_PUBLIC_SUPABASE_ANON_KEY=<clave anon de supabase local>
+BANCOCHILE_RUT=<rut sin puntos con guion>
+BANCOCHILE_PASS=<clave de acceso Banco de Chile>
+```
+
+> **.env.local está en .gitignore — NUNCA debe subir a GitHub.**
+
+---
+
+## Servidor de sincronización (desde Sesión 04)
+
+El servidor Express corre en `http://127.0.0.1:3001` y actúa de puente entre la app React Native y el scraper open-banking-chile, que no puede correr directamente en el navegador.
+
+```bash
+# Iniciar el servidor (Terminal 2)
+cd ~/proyectos/FinanzasApp/dev
+npx ts-node server/syncServer.ts
+```
+
+El endpoint principal es `POST /sync` — la app llama a este endpoint cuando el usuario presiona el botón de sincronización.
+
+---
+
+## Seguridad — reglas absolutas
+
+- **NUNCA** loguear ni imprimir `BANCOCHILE_RUT` o `BANCOCHILE_PASS`
+- **NUNCA** incluir credenciales en commits
+- **NUNCA** enviar credenciales a Supabase, logs, o servicios externos
+- El servidor local solo escucha en `127.0.0.1` — nunca en `0.0.0.0`
+- Errores de autenticación → mensaje genérico al usuario, sin detalles internos
+- Verificar `.gitignore` antes de cada commit si se modificaron archivos sensibles
+
+---
+
+## Ritual de inicio — hacer SIEMPRE antes de trabajar
+
+```bash
+# 1. Abrir Docker Desktop — esperar que el ícono quede estático
+
+# Terminal 1 — app principal
+cd ~/proyectos/FinanzasApp/dev
+supabase start
+npx expo start --web
+git status
+
+# Terminal 2 — servidor de sincronización
+cd ~/proyectos/FinanzasApp/dev
+npx ts-node server/syncServer.ts
+```
+
+## Ritual de cierre — hacer SIEMPRE al terminar
+
+```bash
+# En ambas terminales:
+Ctrl+C
+
+# Luego en Terminal 1:
+supabase stop
+git add .
+git commit -m "descripción de lo que se hizo"
+git push
+```
+
+---
+
+## Claude Code — configuración recomendada
+
+```bash
+# Modelo recomendado para codificación agéntica
+claude --model claude-opus-4-7
+
+# O configurar como default global
+claude config set model claude-opus-4-7
+```
+
+---
+
+## Estado actual del MVP
+
+| Sesión | Fecha | Estado |
+|---|---|---|
+| Sesión 01 | 25 Mayo 2026 | Setup completo: Expo, Supabase local, auth, GitHub ✓ |
+| Sesión 02 | 1 Junio 2026 | Importador TXT: parser, duplicados, 51 transacciones importadas ✓ |
+| Sesión 03 | 3 Junio 2026 | Pantalla Home: balance, lista transacciones, donut chart, selector mes ✓ |
+| Sesión 04 | 3 Junio 2026 | Sincronización: servidor Express + open-banking-chile + SyncButton ✓ |
+
+### Pendiente para completar MVP
+- [ ] Categorización de transacciones (V2 — asignar category_id desde la UI)
+- [ ] Presupuestos y metas (V2)
+- [ ] Preparación para App Store / Play Store (V3)
+
+---
+
+## Notas técnicas importantes
+
+- El **donut chart aparece gris** en MVP porque las transacciones importadas desde TXT no tienen `category_id`. Se resuelve en V2 con categorización manual o automática.
+- **Detección de duplicados en TXT** usa clave compuesta `(date, amount, note)` porque el banco no incluye ID único por transacción.
+- **Fintoc fue descartado para uso personal** — costo mínimo ~$250.000 CLP/mes en producción. Se mantiene en roadmap para V3 (versión comercial con clientes pagantes).
+- **`npx expo install`** (no `npm install`) para cualquier nueva dependencia — garantiza compatibilidad con Expo SDK 56.
+
+---
+
+*Última actualización: Sesión 04 · 3 de Junio 2026*
