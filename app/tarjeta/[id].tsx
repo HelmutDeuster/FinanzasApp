@@ -12,7 +12,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useDetalleTarjeta } from '../../hooks/useDetalleTarjeta';
 import type { TransaccionDetalle } from '../../hooks/useDetalleTarjeta';
+import { useGastoMensualTarjeta } from '../../hooks/useGastoMensualTarjeta';
+import type { GastoMes } from '../../hooks/useGastoMensualTarjeta';
+import { useProyeccionCuotas } from '../../hooks/useProyeccionCuotas';
 import { DetalleTransaccion } from '../../components/DetalleTransaccion';
+import GraficoBarrasMes from '../../components/GraficoBarrasMes';
 
 // ─── Utilidades ───────────────────────────────────────────────────────────────
 
@@ -50,6 +54,11 @@ function FilaTx({ tx, onPress }: { tx: TransaccionDetalle; onPress: () => void }
         </View>
         <View style={estilos.filaTxFila}>
           <Text style={estilos.txFecha}>{formatearFecha(tx.date)}</Text>
+          {tx.installments && (
+            <View style={estilos.badgeCuota}>
+              <Text style={estilos.badgeCuotaTexto}>cuota {tx.installments}</Text>
+            </View>
+          )}
           {esSplit && tx.split_amount != null && (
             <Text style={estilos.txSplitParte}>
               Tu parte: {formatearMonto(tx.split_amount)}
@@ -85,6 +94,28 @@ export default function DetalleTarjetaScreen() {
     error,
     recargar,
   } = useDetalleTarjeta(id ?? '');
+
+  // Gráfico: histórico TC real (pasado/actual) + proyección de cuotas (futuro)
+  const { datos: datosHistorico } = useGastoMensualTarjeta(tarjeta?.last_four ?? null);
+  const { datos: datosCuotas }    = useProyeccionCuotas();
+
+  // Combinar: barras futuras (idx 4-6) se reemplazan con la proyección de cuotas.
+  // Las barras pasadas/actuales (idx 0-3) mantienen el gasto TC real.
+  const datosGrafico: GastoMes[] = datosHistorico.map(barra => {
+    const delta = barra.idx - 3; // -3..+3 relativo al mes actual
+    if (delta <= 0) return barra; // pasado o mes actual → datos reales
+
+    // Mes futuro → proyección de cuotas (delta 1 → proyeccion[0], etc.)
+    const proyIdx  = delta - 1;
+    const proyMes  = datosCuotas?.proyeccion[proyIdx];
+    const montoProyectado = proyMes?.monto ?? 0;
+
+    return {
+      ...barra,
+      monto:        montoProyectado,
+      esProyectado: montoProyectado > 0,  // naranja solo si hay cuotas
+    };
+  });
 
   // Transacción seleccionada al tocar una fila — null significa modal cerrado
   const [txSeleccionada, setTxSeleccionada] = useState<TransaccionDetalle | null>(null);
@@ -142,7 +173,67 @@ export default function DetalleTarjetaScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* ── Stats ──────────────────────────────────────────────── */}
+          {/* ── Cupo de la tarjeta ──────────────────────────────────── */}
+          {tarjeta && tarjeta.total_clp !== null && tarjeta.total_clp > 0 && (() => {
+            const pct = ((tarjeta.used_clp ?? 0) / tarjeta.total_clp!) * 100;
+            return (
+              <View style={estilos.card}>
+                <Text style={estilos.tituloSeccion}>Cupo</Text>
+                <View style={estilos.statsRow}>
+                  <View style={estilos.statBloque}>
+                    <Text style={estilos.statLabel}>Utilizado</Text>
+                    <Text style={[estilos.statMonto, { color: '#E24B4A', fontSize: 17 }]}>
+                      {formatearMonto(tarjeta.used_clp ?? 0)}
+                    </Text>
+                  </View>
+                  <View style={estilos.statDivisor} />
+                  <View style={estilos.statBloque}>
+                    <Text style={estilos.statLabel}>Disponible</Text>
+                    <Text style={[estilos.statMonto, { color: '#639922', fontSize: 17 }]}>
+                      {formatearMonto(tarjeta.available_clp ?? 0)}
+                    </Text>
+                  </View>
+                  <View style={estilos.statDivisor} />
+                  <View style={estilos.statBloque}>
+                    <Text style={estilos.statLabel}>Cupo total</Text>
+                    <Text style={[estilos.statMonto, { fontSize: 17 }]}>
+                      {formatearMonto(tarjeta.total_clp ?? 0)}
+                    </Text>
+                  </View>
+                </View>
+                {/* Barra de utilización */}
+                <View style={estilos.cupoBarraFondo}>
+                  <View style={[estilos.cupoBarraRelleno, {
+                    width: `${Math.min(pct, 100)}%` as `${number}%`,
+                    backgroundColor: pct >= 80 ? '#E24B4A' : pct >= 60 ? '#F5A623' : '#639922',
+                  }]} />
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
+                  <Text style={estilos.cupoSubtitulo}>{pct.toFixed(1)}% utilizado</Text>
+                  {tarjeta.total_usd && tarjeta.total_usd > 0 && (
+                    <Text style={estilos.cupoSubtitulo}>
+                      USD ${(tarjeta.used_usd ?? 0).toFixed(0)} / ${tarjeta.total_usd.toFixed(0)}
+                    </Text>
+                  )}
+                </View>
+                {tarjeta.billing_period && (
+                  <Text style={estilos.cupoSubtitulo}>Período: {tarjeta.billing_period}</Text>
+                )}
+              </View>
+            );
+          })()}
+
+          {/* ── Gráfico histórico + proyección cuotas ──────────────── */}
+          <View style={estilos.card}>
+            <GraficoBarrasMes
+              datos={datosGrafico}
+              titulo="Gasto TC · azul=real · naranja=cuotas proyectadas"
+              colorBarra="#378ADD"
+              altura={160}
+            />
+          </View>
+
+          {/* ── Stats del ciclo ─────────────────────────────────────── */}
           <View style={estilos.card}>
             <View style={estilos.statsRow}>
               <View style={estilos.statBloque}>
@@ -275,4 +366,23 @@ const estilos = StyleSheet.create({
     paddingVertical: 2,
   },
   badgeSplitTexto: { fontSize: 11, color: '#378ADD', fontWeight: '500' },
+
+  // Cuotas
+  badgeCuota: {
+    backgroundColor: '#2A1515',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderWidth: 0.5,
+    borderColor: '#E24B4A',
+  },
+  badgeCuotaTexto: { fontSize: 10, color: '#E24B4A', fontWeight: '500' },
+
+  // Cupo
+  cupoBarraFondo: { height: 6, backgroundColor: '#2A2D38', borderRadius: 3, marginTop: 12 },
+  cupoBarraRelleno: { height: 6, borderRadius: 3 },
+  cupoSubtitulo: { fontSize: 11, color: '#4A4D5A', marginTop: 4 },
+
+  // Nota informativa del gráfico
+  notaGrafico: { fontSize: 10, color: '#2A2D38', marginTop: 8, textAlign: 'center' },
 });

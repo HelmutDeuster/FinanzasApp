@@ -15,6 +15,7 @@ export interface TransaccionDetalle {
   owner: 'me' | 'split' | 'other' | null;
   split_amount: number | null;
   split_person: string | null;
+  installments: string | null;   // "02/06" — para mostrar en el detalle
 }
 
 export function useDetalleTarjeta(tarjetaId: string) {
@@ -68,11 +69,15 @@ export function useDetalleTarjeta(tarjetaId: string) {
       const { start, end } = getCycleRange(tarjeta!.cycle_close_day, cicloOffset);
       const { startISO, endISO } = cicloAIso(start, end);
 
+      // Filtrar solo gastos de tarjeta de crédito para este rango de ciclo.
+      // bank_source distingue TC de cuenta corriente — sin este filtro aparecerían
+      // débitos directos de CC mezclados con los gastos de TC.
       const { data, error: err } = await supabase
         .from('transactions')
-        .select('id, amount, note, date, owner, split_amount, split_person')
+        .select('id, amount, note, date, owner, split_amount, split_person, installments')
         .eq('user_id', user.id)
         .eq('type', 'expense')
+        .in('bank_source', ['credit_card_unbilled', 'credit_card_billed'])
         .gte('date', startISO)
         .lte('date', endISO)
         .order('date', { ascending: false });

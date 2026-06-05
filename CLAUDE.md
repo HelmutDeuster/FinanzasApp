@@ -1,229 +1,183 @@
-# FinanzasApp — Chile
+# CLAUDE.md
 
-App de finanzas personales para web y móvil. Proyecto de portafolio.
-Usuario en Chile, banco: Banco de Chile.
-Integración bancaria vía open-banking-chile (scraper local, gratis).
-Versión comercial futura vía Fintoc (V3).
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ---
 
-## Stack
+## Comandos de desarrollo
 
-| Tecnología | Rol | Fase |
+### Arranque completo (requiere Docker Desktop corriendo)
+
+```bash
+# Terminal 1 — base de datos + app
+supabase start          # inicia PostgreSQL local en Docker
+npx expo start --web    # app en http://localhost:8081
+
+# Terminal 2 — servidor de sincronización bancaria
+npx ts-node server/syncServer.ts
+```
+
+### TypeScript
+
+```bash
+# Check del app (usa tsconfig.json raíz)
+npx tsc --noEmit
+
+# Check del servidor (usa server/tsconfig.json)
+npx tsc --noEmit --project server/tsconfig.json
+```
+
+Hay 4 errores pre-existentes e inocuos en `app/(tabs)/_layout.tsx` relacionados con `ColorValue` vs `string` en los íconos unicode. No son regresiones.
+
+### Dependencias
+
+Usar siempre `npx expo install <paquete>` (nunca `npm install`) — garantiza compatibilidad con Expo SDK 56. Agregar `--legacy-peer-deps` si hay conflictos de pares con React 19.
+
+### Migraciones de base de datos
+
+Las migraciones **no** se aplican con `supabase migration up` porque el tracker local está desfasado. Aplicar directamente:
+
+```bash
+docker cp archivo.sql supabase_db_dev:/tmp/mig.sql
+docker exec supabase_db_dev psql -U postgres -d postgres -f /tmp/mig.sql
+```
+
+Supabase Studio en `http://127.0.0.1:54323` para inspeccionar datos.
+
+---
+
+## Arquitectura
+
+### Flujo de datos bancarios
+
+```
+Banco de Chile
+  ↓  (Playwright / Chromium)
+server/bchileSync.ts          ← convierte formato del banco al de la app
+  ↓  POST /sync (Express 3001)
+lib/syncService.ts            ← upsert tarjetas + snapshot + importar transacciones
+  ↓
+Supabase (PostgreSQL local)
+  ↓
+hooks/use*.ts                 ← cada pestaña tiene su propio hook
+  ↓
+app/(tabs)/*.tsx
+```
+
+El servidor Express **solo** puede correr localmente (escucha en `127.0.0.1`, nunca `0.0.0.0`). El scraper usa Puppeteer/Chromium — requiere que Docker esté activo y el servidor corriendo en Terminal 2.
+
+### Estructura de navegación (Expo Router)
+
+```
+app/_layout.tsx          ← portero: redirige a /(auth)/login o /(tabs)/home según sesión
+app/(auth)/login.tsx
+app/(tabs)/_layout.tsx   ← barra inferior con 4 tabs
+app/(tabs)/home.tsx      ← 3 sub-pestañas: Balance / Cuenta / Tarjetas
+app/(tabs)/me-deben.tsx
+app/(tabs)/proyeccion.tsx
+app/(tabs)/ajustes.tsx
+app/tarjeta/[id].tsx     ← detalle de tarjeta (fuera del grupo tabs → no muestra barra)
+```
+
+### Home — 3 sub-pestañas (estado local, no persiste)
+
+`app/(tabs)/home.tsx` contiene todo el Home. Cada pestaña es un componente función local con su propio hook:
+
+| Pestaña | Componente | Hook |
 |---|---|---|
-| React Native + Expo SDK 56 | Frontend iOS, Android y web desde un solo código | MVP |
-| TypeScript (modo estricto) | Tipado en todo el proyecto | MVP |
-| Supabase (local con Docker) | Base de datos PostgreSQL + auth | MVP |
-| expo-document-picker | Selector de archivos nativo | MVP |
-| Victory Native | Gráficas (donut, barras, líneas) | MVP |
-| open-banking-chile | Scraper cuenta corriente + tarjetas de crédito | MVP |
-| Express (puerto 3001) | Servidor local — puente entre la app y el scraper | MVP |
-| Claude Code (claude-opus-4-7) | Agente en terminal para codificación | MVP |
-| GitHub + Git | Control de versiones y portafolio público | MVP |
-| Claude API | Categorización automática con IA | V3 |
-| Fintoc | Open banking regulado — versión comercial | V3 |
-| Expo EAS | Build y publicación en App Store / Play Store | V3 |
+| Balance | `PestañaBalance` | `useBalanceMensual(año, mes)` |
+| Cuenta | `PestañaCuenta` | `useModoCuentaCC(año, mes)` |
+| Tarjetas | `PestañaTarjetas` | `useModoTarjeta(defaultCloseDay)` |
 
----
+El botón Sincronizar usa un `useRef` para llamar a la función `refrescar` del hook activo, sin saber qué pestaña está abierta.
 
-## Convenciones de código
+`useUserSettings` se usa únicamente para leer `default_close_day` (fallback de ciclo de tarjetas) — el campo `home_mode` ya no controla la UI.
 
-- **TypeScript estricto** — no usar `any`, no ignorar errores de tipos
-- **Comentarios en español** — siempre
-- **Componentes en PascalCase** — `HomeScreen`, `CSVImporter`, `SyncButton`
-- **Custom hooks con prefijo `use`** — `useTransactions`, `useAuth`
-- **Commits en español** — descripción clara de lo que se hizo
-- **`npx expo install`** para nuevas dependencias (no `npm install`) — garantiza compatibilidad con Expo SDK 56
-- **`--legacy-peer-deps`** si hay conflictos de pares entre React 19 y otras librerías
+### bank_source — valores críticos
 
----
-
-## Estructura del proyecto
+Las transacciones usan `bank_source` para distinguir su origen. El CHECK constraint de la BD solo permite:
 
 ```
-~/proyectos/FinanzasApp/
-├── dev/                          ← código de la app (va a GitHub)
-│   ├── app/
-│   │   ├── (auth)/
-│   │   │   └── login.tsx         ← pantalla login/registro ✓
-│   │   ├── (tabs)/
-│   │   │   └── home.tsx          ← pantalla principal ✓
-│   │   ├── _layout.tsx           ← portero de navegación ✓
-│   │   └── index.tsx             ← punto de entrada ✓
-│   ├── components/
-│   │   ├── CSVImporter.tsx       ← importador TXT del banco ✓
-│   │   └── SyncButton.tsx        ← botón sincronización open-banking ✓
-│   ├── hooks/
-│   │   └── useTransactions.ts    ← custom hook transacciones ✓
-│   ├── lib/
-│   │   ├── supabase.ts           ← cliente Supabase ✓
-│   │   ├── csvParser.ts          ← parser TXT Banco de Chile ✓
-│   │   ├── importService.ts      ← guardado en Supabase ✓
-│   │   └── syncService.ts        ← cliente del servidor Express ✓
-│   ├── server/
-│   │   ├── syncServer.ts         ← servidor Express (puerto 3001) ✓
-│   │   └── bchileSync.ts         ← lógica open-banking-chile ✓
-│   ├── types/
-│   │   └── index.ts              ← tipos globales TypeScript ✓
-│   ├── supabase/                 ← configuración Supabase local ✓
-│   ├── CLAUDE.md                 ← este archivo ✓
-│   └── .env.local                ← credenciales (NO va a GitHub) ✓
-└── docs/
-    ├── FinanzasApp_Plan_Maestro.md
-    ├── FinanzasApp_UXUI.md
-    ├── manual_desarrollo.md
-    └── credenciales.txt          ← claves Supabase local
+'account'              → débito de cuenta corriente (open-banking)
+'credit_card_unbilled' → gasto TC no facturado (ciclo abierto)
+'credit_card_billed'   → gasto TC facturado
+NULL                   → importado desde TXT del banco (origen desconocido)
 ```
+
+**Importante:** el valor es `'account'`, no `'checking'`. La pestaña Cuenta filtra estrictamente por `bank_source = 'account'` — las transacciones NULL (TXT) se excluyen porque pueden incluir gastos de TC que no podemos identificar.
+
+### card_last_four — limitación del scraper
+
+El campo `card_last_four` en `transactions` es `NULL` en todos los registros actuales porque `open-banking-chile v2.1.2` no expone a qué tarjeta pertenece cada movimiento individual. `useModoTarjeta` tiene lógica dual:
+- Si alguna transacción tiene `card_last_four != null` → filtrado exacto por tarjeta
+- Si todos son NULL (situación actual) → distribución proporcional usando `credit_cards.used_clp` como peso
+
+### Ciclos de tarjetas
+
+`lib/cycleUtils.ts` → `getCycleRange(closeDay, offset?)`:
+- Si `hoy <= closeDay` → el cierre es **este mes**
+- Si `hoy > closeDay` → el cierre es **el mes siguiente**
+- El inicio siempre es `closeDay + 1` del mes anterior al cierre
+
+`next_billing_date` en `credit_cards` se guarda en formato ISO (`2026-06-22`) desde `lib/syncService.ts → parsearNextBillingDate()`. En el Home, si está disponible, se usa directamente para calcular días restantes en vez de `getCycleRange`.
+
+### Deduplicación de transacciones
+
+Clave: `"fecha|monto|tipo|nota|cuotas"` (ver `lib/importService.ts`). Las cuotas (`installments`) se incluyeron en la clave después de la migración 003, que hizo backfill extrayendo `[cuota 02/06]` de las notas.
+
+### Gráfico de barras
+
+`components/GraficoBarrasMes.tsx` usa **react-native-svg** (no Victory Native). Victory Native está instalado pero no se usa en este componente porque `@shopify/react-native-skia` falla en el navegador al intentar inicializar `XYWHRect`. El componente funciona igual en web y en nativo sin condicionales de plataforma.
+
+### Dos tsconfig separados
+
+- `tsconfig.json` (raíz): compila la app Expo + hooks + components + lib
+- `server/tsconfig.json`: compila solo el servidor Express; excluye explícitamente `app/`, `components/`, `hooks/`, `lib/`
 
 ---
 
-## Base de datos (Supabase local)
-
-### Tablas
+## Esquema de base de datos actual
 
 ```sql
--- Categorías de gastos e ingresos
-categories: id, name, icon, color, type ('income' | 'expense')
+transactions:
+  id, user_id, category_id, amount, note, date, type, source,
+  bank_source, owner, split_amount, split_person,  -- migración 001
+  installments, card_last_four, balance_after       -- migración 003
 
--- Transacciones del usuario
-transactions: id, user_id, category_id, amount, note, date, type,
-              source ('manual' | 'txt' | 'open-banking')
+credit_cards:
+  id, user_id, name, last_four, cycle_close_day, cycle_due_day,
+  active, source, created_at,
+  used_clp, available_clp, total_clp,               -- migración 003
+  used_usd, available_usd, total_usd,
+  next_billing_date, billing_period, last_synced_at
 
--- Presupuestos mensuales
-budgets: id, user_id, category_id, amount, month
+account_snapshots:
+  id, user_id, balance, synced_at                   -- migración 003
 
--- Metas de ahorro
-goals: id, user_id, name, target_amount, current_amount, deadline
+user_settings:
+  user_id, default_close_day, default_due_day,
+  estimated_salary, payment_rut, payment_bank,
+  payment_account, home_mode
+
+debts:         -- para la pestaña "Me deben"
+fixed_expenses:-- para proyección (gastos fijos recurrentes)
+categories:    -- sin UI de gestión todavía
 ```
 
-### RLS activado en
-`transactions`, `budgets`, `goals` — cada usuario solo ve sus propios datos.
-
-### Categorías iniciales
-Supermercado, Transporte, Restaurantes, Salud, Entretenimiento, Servicios, Sueldo, Otros ingresos.
-
-### Campo `source` en transactions
-
-| Valor | Cuándo se usa |
-|---|---|
-| `'manual'` | Ingreso manual por el usuario |
-| `'txt'` | Importado desde el archivo TXT del banco |
-| `'open-banking'` | Sincronizado con open-banking-chile |
-
-### Credenciales locales
-
-| Campo | Valor |
-|---|---|
-| Project URL | http://127.0.0.1:54321 |
-| Studio | http://127.0.0.1:54323 |
-| Base de datos | postgresql://postgres:postgres@127.0.0.1:54322/postgres |
+RLS activo en todas las tablas excepto `categories`.
 
 ---
 
-## Variables de entorno (.env.local)
+## Convenciones del proyecto
 
-```bash
-EXPO_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
-EXPO_PUBLIC_SUPABASE_ANON_KEY=<clave anon de supabase local>
-BANCOCHILE_RUT=<rut sin puntos con guion>
-BANCOCHILE_PASS=<clave de acceso Banco de Chile>
-```
-
-> **.env.local está en .gitignore — NUNCA debe subir a GitHub.**
+- TypeScript estricto — `any` está prohibido salvo en interfaces que Victory Native exige (index signature `[key: string]: unknown` en `GastoMes`)
+- Comentarios en español
+- Commits en español
+- Componentes en PascalCase, hooks con prefijo `use`
+- Formato de montos: `fmt(n)` para montos largos, `fmtAbr(n)` (K/M) para espacios reducidos como el desglose de egresos
 
 ---
 
-## Servidor de sincronización (desde Sesión 04)
+## Seguridad
 
-El servidor Express corre en `http://127.0.0.1:3001` y actúa de puente entre la app React Native y el scraper open-banking-chile, que no puede correr directamente en el navegador.
-
-```bash
-# Iniciar el servidor (Terminal 2)
-cd ~/proyectos/FinanzasApp/dev
-npx ts-node server/syncServer.ts
-```
-
-El endpoint principal es `POST /sync` — la app llama a este endpoint cuando el usuario presiona el botón de sincronización.
-
----
-
-## Seguridad — reglas absolutas
-
-- **NUNCA** loguear ni imprimir `BANCOCHILE_RUT` o `BANCOCHILE_PASS`
-- **NUNCA** incluir credenciales en commits
-- **NUNCA** enviar credenciales a Supabase, logs, o servicios externos
-- El servidor local solo escucha en `127.0.0.1` — nunca en `0.0.0.0`
-- Errores de autenticación → mensaje genérico al usuario, sin detalles internos
-- Verificar `.gitignore` antes de cada commit si se modificaron archivos sensibles
-
----
-
-## Ritual de inicio — hacer SIEMPRE antes de trabajar
-
-```bash
-# 1. Abrir Docker Desktop — esperar que el ícono quede estático
-
-# Terminal 1 — app principal
-cd ~/proyectos/FinanzasApp/dev
-supabase start
-npx expo start --web
-git status
-
-# Terminal 2 — servidor de sincronización
-cd ~/proyectos/FinanzasApp/dev
-npx ts-node server/syncServer.ts
-```
-
-## Ritual de cierre — hacer SIEMPRE al terminar
-
-```bash
-# En ambas terminales:
-Ctrl+C
-
-# Luego en Terminal 1:
-supabase stop
-git add .
-git commit -m "descripción de lo que se hizo"
-git push
-```
-
----
-
-## Claude Code — configuración recomendada
-
-```bash
-# Modelo recomendado para codificación agéntica
-claude --model claude-opus-4-7
-
-# O configurar como default global
-claude config set model claude-opus-4-7
-```
-
----
-
-## Estado actual del MVP
-
-| Sesión | Fecha | Estado |
-|---|---|---|
-| Sesión 01 | 25 Mayo 2026 | Setup completo: Expo, Supabase local, auth, GitHub ✓ |
-| Sesión 02 | 1 Junio 2026 | Importador TXT: parser, duplicados, 51 transacciones importadas ✓ |
-| Sesión 03 | 3 Junio 2026 | Pantalla Home: balance, lista transacciones, donut chart, selector mes ✓ |
-| Sesión 04 | 3 Junio 2026 | Sincronización: servidor Express + open-banking-chile + SyncButton ✓ |
-
-### Pendiente para completar MVP
-- [ ] Categorización de transacciones (V2 — asignar category_id desde la UI)
-- [ ] Presupuestos y metas (V2)
-- [ ] Preparación para App Store / Play Store (V3)
-
----
-
-## Notas técnicas importantes
-
-- El **donut chart aparece gris** en MVP porque las transacciones importadas desde TXT no tienen `category_id`. Se resuelve en V2 con categorización manual o automática.
-- **Detección de duplicados en TXT** usa clave compuesta `(date, amount, note)` porque el banco no incluye ID único por transacción.
-- **Fintoc fue descartado para uso personal** — costo mínimo ~$250.000 CLP/mes en producción. Se mantiene en roadmap para V3 (versión comercial con clientes pagantes).
-- **`npx expo install`** (no `npm install`) para cualquier nueva dependencia — garantiza compatibilidad con Expo SDK 56.
-
----
-
-*Última actualización: Sesión 04 · 3 de Junio 2026*
+`BANCOCHILE_RUT` y `BANCOCHILE_PASS` viven en `.env.local` (en `.gitignore`). Nunca loguear estas variables ni incluirlas en respuestas al cliente. El servidor devuelve mensajes genéricos en errores de autenticación.

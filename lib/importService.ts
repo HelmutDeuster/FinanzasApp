@@ -25,7 +25,7 @@ async function obtenerTransaccionesExistentes(
 
   const { data, error } = await supabase
     .from('transactions')
-    .select('date, amount, type, note')
+    .select('date, amount, type, note, installments')
     .eq('user_id', userId)
     .in('date', fechas); // solo busca en las fechas que trae el CSV
 
@@ -34,11 +34,13 @@ async function obtenerTransaccionesExistentes(
     throw new Error('No se pudo verificar duplicados: ' + error.message);
   }
 
-  // Creamos una clave única por transacción: "fecha|monto|tipo|nota"
-  // Usamos Set porque la búsqueda en Set es O(1) — muy rápida
+  // Clave única: "fecha|monto|tipo|nota|cuotas"
+  // Incluir installments permite distinguir cuota 1/6 de cuota 2/6 del mismo gasto.
+  // La migración 003 hizo backfill de installments en registros existentes, por lo
+  // que la clave es consistente para syncs futuros.
   const existentes = new Set<string>();
   for (const t of data ?? []) {
-    const clave = `${t.date}|${t.amount}|${t.type}|${t.note}`;
+    const clave = `${t.date}|${t.amount}|${t.type}|${t.note}|${t.installments ?? ''}`;
     existentes.add(clave);
   }
 
@@ -68,7 +70,7 @@ export async function importarTransacciones(
   const nuevas: TransaccionParaGuardar[] = [];
 
   for (const t of transacciones) {
-    const clave = `${t.date}|${t.amount}|${t.type}|${t.note}`;
+    const clave = `${t.date}|${t.amount}|${t.type}|${t.note}|${t.installments ?? ''}`;
     if (existentes.has(clave)) {
       resultado.duplicadas++;
     } else {

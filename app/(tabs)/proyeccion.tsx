@@ -14,9 +14,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useProyeccion } from '../../hooks/useProyeccion';
+import { useGastoMensualTotal } from '../../hooks/useGastoMensualTotal';
 import WaterfallProyeccion from '../../components/WaterfallProyeccion';
 import GastosFijos from '../../components/GastosFijos';
 import SimuladorYSi from '../../components/SimuladorYSi';
+import GraficoBarrasMes from '../../components/GraficoBarrasMes';
 
 type SubVista = 'proyeccion' | 'simulador';
 
@@ -116,6 +118,7 @@ function TresPreguntas({
 export default function ProyeccionScreen() {
   const [vista, setVista] = useState<SubVista>('proyeccion');
   const { datos, loading, toggleFijo, editarMonto } = useProyeccion();
+  const { datos: datosGrafico } = useGastoMensualTotal();
 
   return (
     <SafeAreaView style={estilos.fondo}>
@@ -147,6 +150,16 @@ export default function ProyeccionScreen() {
 
             {vista === 'proyeccion' ? (
               <>
+                {/* Gráfico de gasto histórico consolidado — todos los tipos de transacción */}
+                <View style={estilos.tarjeta}>
+                  <GraficoBarrasMes
+                    datos={datosGrafico}
+                    titulo="Gasto mensual histórico"
+                    colorBarra="#E24B4A"
+                    altura={160}
+                  />
+                </View>
+
                 {/* Las 3 preguntas */}
                 <TresPreguntas
                   paraAhorrar={datos.paraAhorrar}

@@ -1,15 +1,11 @@
 // hooks/useBalanceMensual.ts
-// Balance mensual para el Bloque 1 del Home.
-// Implementa la ecuación contable: Ingresos = Ahorro + Egresos
+// Balance mensual para el Bloque 1 del Home (Modo Tarjeta).
+// Acepta año y mes como parámetros para que el usuario pueda navegar entre meses.
 //
-// Clasificación de transacciones del mes actual:
-//   Ingresos    → type = 'income'
-//   Egresos TC  → type = 'expense' + bank_source de tarjeta de crédito
-//   Egresos CC  → type = 'expense' + bank_source NULL o 'account' (cuenta corriente / TXT)
+// Ecuación: Ingresos = Ahorro + Egresos
+//   Egresos TC  → bank_source 'credit_card_unbilled' | 'credit_card_billed'
+//   Egresos CC  → bank_source NULL (TXT) o 'account' (open-banking cuenta)
 //   Ahorro      → Ingresos − Egresos (residuo; puede ser negativo)
-//
-// NOTA MVP: no existe clasificación "Fintual" en la BD todavía.
-// El ahorro es el residuo de la ecuación. Se refinará en V2 con categorización.
 
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
@@ -28,7 +24,7 @@ type TxRow = {
   bank_source: string | null;
 };
 
-export function useBalanceMensual() {
+export function useBalanceMensual(año: number, mes: number) {
   const [datos, setDatos] = useState<DatosBalanceMensual | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -38,12 +34,9 @@ export function useBalanceMensual() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setLoading(false); return; }
 
-    // Rango del mes actual (1 → último día)
-    const hoy = new Date();
-    const primerDia = new Date(hoy.getFullYear(), hoy.getMonth(), 1)
-      .toISOString().slice(0, 10);
-    const ultimoDia = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0)
-      .toISOString().slice(0, 10);
+    // Rango del mes recibido como parámetro (1er día → último día)
+    const primerDia = new Date(año, mes, 1).toISOString().slice(0, 10);
+    const ultimoDia = new Date(año, mes + 1, 0).toISOString().slice(0, 10);
 
     const { data } = await supabase
       .from('transactions')
@@ -66,17 +59,16 @@ export function useBalanceMensual() {
       ) {
         egresosTc += monto;
       } else {
-        // Cuenta corriente directa (bank_source NULL = TXT, o 'account' = open-banking)
         egresosCC += monto;
       }
     }
 
     const egresos = egresosTc + egresosCC;
-    const ahorro = ingresos - egresos;
+    const ahorro  = ingresos - egresos;
 
     setDatos({ ingresos, egresosTc, egresosCC, egresos, ahorro });
     setLoading(false);
-  }, []);
+  }, [año, mes]);
 
   useEffect(() => { cargar(); }, [cargar]);
 

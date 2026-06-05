@@ -42,16 +42,19 @@ app.post('/sync', async (_req, res) => {
   const inicio = Date.now();
 
   try {
-    const movimientos = await sincronizarBancoChile((paso) => {
+    const { movimientos, tarjetas, saldo } = await sincronizarBancoChile((paso) => {
       // Logueamos el progreso del scraper en la terminal del servidor.
       // Esto NO se envía al cliente — solo sirve para depurar.
       console.log(`[sync] ${paso}`);
     });
 
     const duracion = ((Date.now() - inicio) / 1000).toFixed(1);
-    console.log(`[sync] Completado en ${duracion}s — ${movimientos.length} movimientos`);
+    console.log(
+      `[sync] Completado en ${duracion}s — ${movimientos.length} movimientos, ` +
+      `${tarjetas.length} tarjetas, saldo CC $${saldo.toLocaleString('es-CL')}`
+    );
 
-    res.json({ ok: true, movimientos });
+    res.json({ ok: true, movimientos, tarjetas, saldo });
   } catch (error) {
     const mensaje = error instanceof Error ? error.message : 'Error desconocido';
 

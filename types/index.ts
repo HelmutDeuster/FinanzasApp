@@ -35,6 +35,10 @@ export interface TransaccionParaGuardar {
   owner?: SplitOwner;                           // para splits; null = 'me'
   split_amount?: number | null;
   split_person?: string | null;
+  // Campos nuevos — poblados por open-banking-chile (migración 003)
+  installments?: string | null;                 // "02/06" — cuota 2 de 6; null = pago único
+  card_last_four?: string | null;               // "5786" — reservado para cuando la lib lo exponga
+  balance_after?: number | null;                // saldo CC después del movimiento
 }
 
 // ─── Tarjetas de crédito ──────────────────────────────────────────────────────
@@ -42,13 +46,39 @@ export interface TransaccionParaGuardar {
 export interface CreditCard {
   id: string;
   user_id: string;
-  name: string;                                 // "Visa principal"
-  last_four: string | null;                     // "8335"
-  cycle_close_day: number;                      // 1–31
-  cycle_due_day: number;                        // 1–31
+  name: string;                                 // "Visa Infinite"
+  last_four: string | null;                     // "5786"
+  cycle_close_day: number;                      // 1–31 — configurable en Ajustes
+  cycle_due_day: number;                        // 1–31 — configurable en Ajustes
   active: boolean;
   source: 'open-banking' | 'manual';
   created_at: string;
+  // Cupos — actualizados en cada sync con open-banking (migración 003)
+  used_clp: number | null;
+  available_clp: number | null;
+  total_clp: number | null;
+  used_usd: number | null;
+  available_usd: number | null;
+  total_usd: number | null;
+  next_billing_date: string | null;             // "22 de junio"
+  billing_period: string | null;                // "Mayo 2026"
+  last_synced_at: string | null;
+}
+
+// Datos de una tarjeta tal como los devuelve el servidor tras el scrape.
+// Se diferencia de CreditCard en que no tiene id ni días de ciclo
+// (esos los gestiona el usuario en Ajustes).
+export interface CreditCardSyncData {
+  label: string;                                // "Visa Infinite ****5786"
+  last_four: string;                            // "5786" — extraído del label
+  used_clp: number;
+  available_clp: number;
+  total_clp: number;
+  used_usd: number | null;
+  available_usd: number | null;
+  total_usd: number | null;
+  next_billing_date: string | null;
+  billing_period: string | null;
 }
 
 // ─── Configuración del usuario ────────────────────────────────────────────────
