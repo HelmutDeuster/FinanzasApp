@@ -64,7 +64,11 @@ export async function importarTransacciones(
 
   // Paso 1: consultar qué ya existe en la BD
   const userId = transacciones[0].user_id;
+  // [DIAG] userId que se usa para consultar y para insertar
+  console.log('[import] userId:', userId);
   const existentes = await obtenerTransaccionesExistentes(userId, transacciones);
+  // [DIAG] cuántas transacciones ya existían en las fechas del lote
+  console.log('[import] existentes encontrados:', existentes.size, '| nuevas a insertar:', transacciones.length - existentes.size);
 
   // Paso 2: filtrar las nuevas (las que no están en existentes)
   const nuevas: TransaccionParaGuardar[] = [];
@@ -92,7 +96,9 @@ export async function importarTransacciones(
       .insert(lote);
 
     if (error) {
-      console.error('Error insertando lote:', error);
+      // [DIAG] error completo del lote — incluye code, message, details, hint
+      console.error('[import] Error insertando lote (lote size:', lote.length, '):', JSON.stringify(error, null, 2));
+      console.error('[import] Primer elemento del lote fallido:', JSON.stringify(lote[0], null, 2));
       resultado.errores += lote.length;
     } else {
       resultado.importadas += lote.length;

@@ -73,6 +73,10 @@ export async function sincronizar(): Promise<ResultadoImportacion> {
 
   const movimientos = datos.movimientos ?? [];
 
+  // [DIAG] cuántos movimientos llegaron y cómo se ven los primeros 2
+  console.log('[sync] movimientos recibidos del servidor:', movimientos.length);
+  console.log('[sync] primeros 2 movimientos:', JSON.stringify(movimientos.slice(0, 2), null, 2));
+
   // Paso 4: importar movimientos con deduplicación
   if (movimientos.length === 0) {
     return { total: 0, importadas: 0, duplicadas: 0, errores: 0 };
