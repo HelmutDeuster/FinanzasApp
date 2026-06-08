@@ -89,31 +89,33 @@ export default function DetalleTarjetaScreen() {
     puedeAvanzar,
     totalNeto,
     totalBruto,
+    esProporcional,
     cicloLabel,
     loading,
     error,
     recargar,
   } = useDetalleTarjeta(id ?? '');
 
-  // Gráfico: histórico TC real (pasado/actual) + proyección de cuotas (futuro)
-  const { datos: datosHistorico } = useGastoMensualTarjeta(tarjeta?.last_four ?? null);
-  const { datos: datosCuotas }    = useProyeccionCuotas();
+  // Gráfico: histórico TC real (pasado/actual) + proyección de cuotas (futuro).
+  // Pasamos el id de la tarjeta para que el hook aplique distribución proporcional
+  // cuando card_last_four es NULL (situación actual con el scraper v2.1.2).
+  // factorPeso también se aplica a las barras futuras de cuotas para consistencia.
+  const { datos: datosHistorico, factorPeso } = useGastoMensualTarjeta(id ?? null);
+  const { datos: datosCuotas }                = useProyeccionCuotas();
 
-  // Combinar: barras futuras (idx 4-6) se reemplazan con la proyección de cuotas.
-  // Las barras pasadas/actuales (idx 0-3) mantienen el gasto TC real.
+  // Combinar: barras futuras (idx 4-6) se reemplazan con la proyección de cuotas
+  // escalada al mismo factor proporcional que el histórico.
   const datosGrafico: GastoMes[] = datosHistorico.map(barra => {
-    const delta = barra.idx - 3; // -3..+3 relativo al mes actual
-    if (delta <= 0) return barra; // pasado o mes actual → datos reales
+    const delta = barra.idx - 3;
+    if (delta <= 0) return barra;
 
-    // Mes futuro → proyección de cuotas (delta 1 → proyeccion[0], etc.)
-    const proyIdx  = delta - 1;
-    const proyMes  = datosCuotas?.proyeccion[proyIdx];
-    const montoProyectado = proyMes?.monto ?? 0;
+    const proyMes = datosCuotas?.proyeccion[delta - 1];
+    const montoProyectado = Math.round((proyMes?.monto ?? 0) * factorPeso);
 
     return {
       ...barra,
       monto:        montoProyectado,
-      esProyectado: montoProyectado > 0,  // naranja solo si hay cuotas
+      esProyectado: montoProyectado > 0,
     };
   });
 
@@ -252,6 +254,11 @@ export default function DetalleTarjetaScreen() {
                 </>
               )}
             </View>
+            {esProporcional && (
+              <Text style={estilos.notaProporcional}>
+                Estimación proporcional · el banco no informa a qué tarjeta pertenece cada movimiento
+              </Text>
+            )}
           </View>
 
           {/* ── Lista de transacciones ──────────────────────────────── */}
@@ -385,4 +392,5 @@ const estilos = StyleSheet.create({
 
   // Nota informativa del gráfico
   notaGrafico: { fontSize: 10, color: '#2A2D38', marginTop: 8, textAlign: 'center' },
+  notaProporcional: { fontSize: 10, color: '#4A4D5A', marginTop: 10, textAlign: 'center', fontStyle: 'italic' },
 });

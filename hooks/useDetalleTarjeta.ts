@@ -1,6 +1,12 @@
 // hooks/useDetalleTarjeta.ts
 // Datos para la pantalla de detalle de una tarjeta de crédito.
 // Permite navegar entre ciclos pasados con cicloOffset.
+//
+// Estrategia de filtrado (misma lógica que useModoTarjeta):
+//   EXACTA: cuando card_last_four está disponible → filtramos por tarjeta.
+//   PROPORCIONAL (activa hoy): card_last_four es NULL en todos los registros.
+//     Mostramos todas las transacciones TC del ciclo pero ajustamos los
+//     totales proporcionalmente usando used_clp como peso por tarjeta.
 
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
@@ -18,11 +24,17 @@ export interface TransaccionDetalle {
   installments: string | null;   // "02/06" — para mostrar en el detalle
 }
 
+interface TransaccionDetalleRaw extends TransaccionDetalle {
+  card_last_four: string | null;
+}
+
 export function useDetalleTarjeta(tarjetaId: string) {
   const [tarjeta, setTarjeta]             = useState<CreditCard | null>(null);
   const [transacciones, setTransacciones] = useState<TransaccionDetalle[]>([]);
   const [cicloOffset, setCicloOffset]     = useState(0);
   const [refreshKey, setRefreshKey]       = useState(0);
+  const [factorPeso, setFactorPeso]       = useState(1);
+  const [esProporcional, setEsProporcional] = useState(false);
   const [loading, setLoading]             = useState(true);
   const [error, setError]                 = useState<string | null>(null);
 
@@ -69,26 +81,62 @@ export function useDetalleTarjeta(tarjetaId: string) {
       const { start, end } = getCycleRange(tarjeta!.cycle_close_day, cicloOffset);
       const { startISO, endISO } = cicloAIso(start, end);
 
-      // Filtrar solo gastos de tarjeta de crédito para este rango de ciclo.
-      // bank_source distingue TC de cuenta corriente — sin este filtro aparecerían
-      // débitos directos de CC mezclados con los gastos de TC.
-      const { data, error: err } = await supabase
-        .from('transactions')
-        .select('id, amount, note, date, owner, split_amount, split_person, installments')
-        .eq('user_id', user.id)
-        .eq('type', 'expense')
-        .in('bank_source', ['credit_card_unbilled', 'credit_card_billed'])
-        .gte('date', startISO)
-        .lte('date', endISO)
-        .order('date', { ascending: false });
+      // Cargamos transacciones TC y todas las tarjetas activas en paralelo.
+      // Las tarjetas se necesitan para calcular el peso proporcional cuando
+      // card_last_four es NULL (situación actual con el scraper v2.1.2).
+      const [txResult, cardsResult] = await Promise.all([
+        supabase
+          .from('transactions')
+          .select('id, amount, note, date, owner, split_amount, split_person, installments, card_last_four')
+          .eq('user_id', user.id)
+          .eq('type', 'expense')
+          .in('bank_source', ['credit_card_unbilled', 'credit_card_billed'])
+          .gte('date', startISO)
+          .lte('date', endISO)
+          .order('date', { ascending: false }),
+        supabase
+          .from('credit_cards')
+          .select('id, used_clp, last_four')
+          .eq('user_id', user.id)
+          .eq('active', true),
+      ]);
 
       if (!activo) return;
-      if (err) {
+      if (txResult.error) {
         setError('No se pudieron cargar las transacciones.');
         setLoading(false);
         return;
       }
-      setTransacciones((data ?? []) as unknown as TransaccionDetalle[]);
+
+      const rawTx = (txResult.data ?? []) as unknown as TransaccionDetalleRaw[];
+      const todasLasTarjetas = (cardsResult.data ?? []) as {
+        id: string; used_clp: number | null; last_four: string | null;
+      }[];
+
+      // Estrategia EXACTA: si alguna transacción tiene card_last_four, filtrar por tarjeta.
+      // Estrategia PROPORCIONAL: si card_last_four es NULL y hay más de 1 tarjeta, ajustar totales.
+      const hayCardLastFour = rawTx.some(tx => tx.card_last_four != null);
+      let txFiltradas: TransaccionDetalle[];
+      let factor = 1;
+      let esProp = false;
+
+      if (hayCardLastFour) {
+        txFiltradas = rawTx.filter(tx => tx.card_last_four === tarjeta!.last_four);
+      } else if (todasLasTarjetas.length > 1) {
+        const pesoTotal = todasLasTarjetas.reduce((s, c) => s + (c.used_clp ?? 0), 0);
+        const estaCard  = todasLasTarjetas.find(c => c.id === tarjetaId);
+        factor = pesoTotal > 0
+          ? (estaCard?.used_clp ?? 0) / pesoTotal
+          : 1 / todasLasTarjetas.length;
+        esProp = true;
+        txFiltradas = rawTx;
+      } else {
+        txFiltradas = rawTx;
+      }
+
+      setTransacciones(txFiltradas);
+      setFactorPeso(factor);
+      setEsProporcional(esProp);
       setLoading(false);
     }
 
@@ -96,7 +144,8 @@ export function useDetalleTarjeta(tarjetaId: string) {
     return () => { activo = false; };
   }, [tarjeta, cicloOffset, refreshKey]);
 
-  // Totales derivados en render (sin useEffect extra)
+  // Totales derivados en render (sin useEffect extra).
+  // Se aplica factorPeso para la distribución proporcional.
   const { totalNeto, totalBruto } = transacciones.reduce(
     (acc, tx) => {
       const bruto = Number(tx.amount);
@@ -127,8 +176,9 @@ export function useDetalleTarjeta(tarjetaId: string) {
     cicloOffset,
     setCicloOffset,
     puedeAvanzar,
-    totalNeto,
-    totalBruto,
+    totalNeto:  Math.round(totalNeto  * factorPeso),
+    totalBruto: Math.round(totalBruto * factorPeso),
+    esProporcional,
     cicloLabel,
     loading,
     error,

@@ -36,6 +36,7 @@ import { useTransactions } from '../../hooks/useTransactions';
 import type { GastoPorCategoria, TransaccionConCategoria } from '../../hooks/useTransactions';
 import SyncButton from '../../components/SyncButton';
 import GraficoBarrasMes from '../../components/GraficoBarrasMes';
+import { useGastoMensualTarjeta } from '../../hooks/useGastoMensualTarjeta';
 import type { CreditCard } from '../../types';
 import { getCycleRange, diasRestantes } from '../../lib/cycleUtils';
 
@@ -643,6 +644,17 @@ function PestañaTarjetas({
   const isDesktop = width >= 768;
 
   const { datos, loading, refrescar } = useModoTarjeta(defaultCloseDay);
+  const { datos: datosHistorico }     = useGastoMensualTarjeta(null);
+  const { datos: datosCuotas }        = useProyeccionCuotas();
+
+  // Combina histórico TC real (pasado/actual) con proyección de cuotas (futuro)
+  const datosGrafico = datosHistorico.map(barra => {
+    const delta = barra.idx - 3;
+    if (delta <= 0) return barra;
+    const proyMes = datosCuotas?.proyeccion[delta - 1];
+    const montoProyectado = proyMes?.monto ?? 0;
+    return { ...barra, monto: montoProyectado, esProyectado: montoProyectado > 0 };
+  });
 
   useEffect(() => { onSetRefrescar(refrescar); }, [onSetRefrescar, refrescar]);
 
@@ -712,6 +724,18 @@ function PestañaTarjetas({
           <Text style={estilos.cupoSubtitulo}>
             {pctUso.toFixed(1)}% del cupo total utilizado · {fmt(totalCupo)} cupo total
           </Text>
+        </View>
+      )}
+
+      {/* Gráfico de gasto TC acumulado — real (azul) + cuotas proyectadas (naranja) */}
+      {datosGrafico.length > 0 && (
+        <View style={estilos.tarjeta}>
+          <GraficoBarrasMes
+            datos={datosGrafico}
+            titulo="Gasto TC total · azul=real · naranja=cuotas"
+            colorBarra="#378ADD"
+            altura={160}
+          />
         </View>
       )}
 
@@ -925,6 +949,7 @@ const estilos = StyleSheet.create({
   },
   textoVacio: { color: '#4A4D5A', fontSize: 14, textAlign: 'center', paddingVertical: 8 },
   textoVacioSub: { color: '#4A4D5A', fontSize: 12, textAlign: 'center' },
+  mesFuturoLabel: { color: '#4A4D5A', fontSize: 11, fontWeight: '600' as const, textTransform: 'uppercase' as const, letterSpacing: 0.5, marginBottom: 8 },
 
   // ── Balance ───────────────────────────────────────────────────────────
   balanceHero: {
