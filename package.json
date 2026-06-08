@@ -13,7 +13,7 @@
     "expo-router": "~56.2.6",
     "expo-status-bar": "~56.0.4",
     "express": "^5.2.1",
-    "open-banking-chile": "^2.1.2",
+    "open-banking-chile": "github:kaihv/open-banking-chile",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-native": "0.85.3",

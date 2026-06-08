@@ -37,24 +37,27 @@ app.use(
 // ─── POST /sync ───────────────────────────────────────────────────────────────
 // Ejecuta el scraper y devuelve los movimientos convertidos al formato de la app.
 // La app los guarda en Supabase con su propia sesión de usuario.
-app.post('/sync', async (_req, res) => {
+app.post('/sync', async (req, res) => {
+  const userId: string | undefined = req.body?.user_id;
+  if (!userId) {
+    res.status(400).json({ ok: false, error: 'Falta user_id en el body' });
+    return;
+  }
+
   console.log('[sync] Iniciando sincronización con Banco de Chile...');
   const inicio = Date.now();
 
   try {
-    const { movimientos, tarjetas, saldo } = await sincronizarBancoChile((paso) => {
+    const { movimientos } = await sincronizarBancoChile(userId, (paso) => {
       // Logueamos el progreso del scraper en la terminal del servidor.
       // Esto NO se envía al cliente — solo sirve para depurar.
       console.log(`[sync] ${paso}`);
     });
 
     const duracion = ((Date.now() - inicio) / 1000).toFixed(1);
-    console.log(
-      `[sync] Completado en ${duracion}s — ${movimientos.length} movimientos, ` +
-      `${tarjetas.length} tarjetas, saldo CC $${saldo.toLocaleString('es-CL')}`
-    );
+    console.log(`[sync] Completado en ${duracion}s — ${movimientos.length} movimientos`);
 
-    res.json({ ok: true, movimientos, tarjetas, saldo });
+    res.json({ ok: true, movimientos });
   } catch (error) {
     const mensaje = error instanceof Error ? error.message : 'Error desconocido';
 
