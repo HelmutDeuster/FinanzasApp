@@ -131,7 +131,7 @@ export function useModoTarjeta(defaultCloseDay: number = 23) {
     // Rama PROPORCIONAL (activa hoy): usamos used_clp del banco como proxy
     // del peso de gasto de cada tarjeta — es el saldo usado según el banco,
     // que refleja el historial real mejor que repartir en partes iguales.
-    const hayCardLastFour = todasLasTx.some(tx => tx.card_last_four != null);
+    const hayCardLastFour = txRef.length > 0 && txRef.every(tx => tx.card_last_four != null);
 
     let spendPorTarjeta: SpendTarjeta[];
 

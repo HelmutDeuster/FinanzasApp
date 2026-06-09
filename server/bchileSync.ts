@@ -28,6 +28,15 @@ function extraerLastFour(label: string): string | null {
   return match ? match[1] : null;
 }
 
+// ─── Monto por cuota ──────────────────────────────────────────────────────────
+// El scraper devuelve el monto total de la compra, no la cuota mensual.
+// "01/05" → dividir entre 5. "01/01" o null → pago único, monto completo.
+function montoPorCuota(amount: number, installments: string | null): number {
+  if (!installments || installments === '01/01') return Math.abs(amount);
+  const total = parseInt(installments.split('/')[1]);
+  return isNaN(total) || total <= 0 ? Math.abs(amount) : Math.round(Math.abs(amount) / total);
+}
+
 // ─── Conversión de movimiento ─────────────────────────────────────────────────
 // cardLastFour: null para cuenta corriente, string para TC
 function convertirMovimiento(
@@ -36,7 +45,7 @@ function convertirMovimiento(
 ): Omit<TransaccionParaGuardar, 'user_id'> {
   return {
     category_id: null,
-    amount:      Math.abs(mov.amount),
+    amount:      montoPorCuota(mov.amount, mov.installments ?? null),
     type:        mov.amount >= 0 ? 'income' : 'expense',
     note:        mov.description.trim(),
     date:        convertirFecha(mov.date),
@@ -222,13 +231,16 @@ export async function sincronizarBancoChile(
     .map(mov => convertirMovimiento(mov, null));
 
   // ─── Movimientos de tarjetas de crédito ─────────────────────────────────────
-  // card_last_four viene del label de la tarjeta padre (no del campo mov.card,
-  // que puede ser undefined en algunos movimientos de TC facturada)
+  // card_last_four se lee de mov.card ("****6074") por movimiento individual —
+  // el scraper puede anidar el mismo movimiento billed en varias tarjetas padre,
+  // pero mov.card siempre apunta a la tarjeta real. Fallback al label de la
+  // tarjeta padre si mov.card no está disponible.
   const movsTC: Omit<TransaccionParaGuardar, 'user_id'>[] = [];
   for (const card of resultado.creditCards ?? []) {
-    const last_four = extraerLastFour(card.label);
-    if (!last_four) continue;
     for (const mov of card.movements ?? []) {
+      const last_four = mov.card
+        ? mov.card.replace('****', '')
+        : extraerLastFour(card.label);
       movsTC.push(convertirMovimiento(mov, last_four));
     }
   }

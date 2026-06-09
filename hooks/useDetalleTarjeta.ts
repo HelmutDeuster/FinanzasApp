@@ -115,7 +115,7 @@ export function useDetalleTarjeta(tarjetaId: string) {
 
       // Estrategia EXACTA: si alguna transacción tiene card_last_four, filtrar por tarjeta.
       // Estrategia PROPORCIONAL: si card_last_four es NULL y hay más de 1 tarjeta, ajustar totales.
-      const hayCardLastFour = rawTx.some(tx => tx.card_last_four != null);
+      const hayCardLastFour = rawTx.length > 0 && rawTx.every(tx => tx.card_last_four != null);
       let txFiltradas: TransaccionDetalle[];
       let factor = 1;
       let esProp = false;
