@@ -9,6 +9,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { clasificar } from '../lib/balanceClassify';
 
 const MESES_CORTOS = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
 const MESES_HISTORIAL = 7; // barras del gráfico
@@ -118,8 +119,13 @@ export function useModoCuentaCC(año: number, mes: number) {
 
     for (const tx of txData ?? []) {
       const monto = Number(tx.amount);
-      if (tx.type === 'income') ingresosMes += monto;
-      else gastosMes += monto;
+      // Misma clasificación que el Balance: el pago de la tarjeta y los traspasos
+      // entre cuentas propias no son gasto/ingreso real; el aporte a Fintual es ahorro.
+      const cat = clasificar({ type: tx.type, bank_source: tx.bank_source, note: tx.note });
+      if (cat === 'ingreso') ingresosMes += monto;
+      else if (cat === 'egreso_cc') gastosMes += monto;
+      // La lista 'ultimas' sigue mostrando TODOS los movimientos de la cuenta,
+      // sin filtrar, para que el usuario vea el extracto completo.
       if (ultimas.length < 15) {
         ultimas.push({
           id: tx.id,

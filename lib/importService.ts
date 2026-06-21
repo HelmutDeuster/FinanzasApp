@@ -11,6 +11,23 @@ import { TransaccionParaGuardar, ResultadoImportacion } from '../types';
 // Esta estrategia cubre el 99% de los casos — un mismo cargo el mismo día
 // con la misma descripción y monto es casi imposible que sea transacción distinta.
 
+// Clave de deduplicación, usada de forma idéntica al consultar la BD y al
+// filtrar el lote entrante (un solo lugar para no divergir).
+//
+// Incluye balance_after (saldo corrido después del movimiento) porque el banco
+// NO entrega ID de transacción, hora ni número de operación. Dos transacciones
+// reales idénticas el mismo día (ej. dos transferencias de $100.000 a Fintual)
+// solo se distinguen por el saldo que dejan, que es determinístico y estable.
+// Cuando no hay balance (TC trae 0, TXT trae NULL) este componente queda vacío
+// y la clave se comporta como antes — no empeora ningún caso.
+function claveDedup(t: {
+  date: string; amount: number; type: string; note: string;
+  installments?: string | null; balance_after?: number | null;
+}): string {
+  const bal = t.balance_after == null ? '' : String(Math.round(Number(t.balance_after)));
+  return `${t.date}|${t.amount}|${t.type}|${t.note}|${t.installments ?? ''}|${bal}`;
+}
+
 // Verifica cuáles transacciones ya existen en la base de datos
 // Devuelve un Set con claves únicas de las transacciones existentes
 async function obtenerTransaccionesExistentes(
@@ -25,7 +42,7 @@ async function obtenerTransaccionesExistentes(
 
   const { data, error } = await supabase
     .from('transactions')
-    .select('date, amount, type, note, installments')
+    .select('date, amount, type, note, installments, balance_after')
     .eq('user_id', userId)
     .in('date', fechas); // solo busca en las fechas que trae el CSV
 
@@ -34,14 +51,9 @@ async function obtenerTransaccionesExistentes(
     throw new Error('No se pudo verificar duplicados: ' + error.message);
   }
 
-  // Clave única: "fecha|monto|tipo|nota|cuotas"
-  // Incluir installments permite distinguir cuota 1/6 de cuota 2/6 del mismo gasto.
-  // La migración 003 hizo backfill de installments en registros existentes, por lo
-  // que la clave es consistente para syncs futuros.
   const existentes = new Set<string>();
   for (const t of data ?? []) {
-    const clave = `${t.date}|${t.amount}|${t.type}|${t.note}|${t.installments ?? ''}`;
-    existentes.add(clave);
+    existentes.add(claveDedup(t as Parameters<typeof claveDedup>[0]));
   }
 
   return existentes;
@@ -74,11 +86,16 @@ export async function importarTransacciones(
   const nuevas: TransaccionParaGuardar[] = [];
 
   for (const t of transacciones) {
-    const clave = `${t.date}|${t.amount}|${t.type}|${t.note}|${t.installments ?? ''}`;
+    const clave = claveDedup(t);
     if (existentes.has(clave)) {
       resultado.duplicadas++;
     } else {
       nuevas.push(t);
+      // Agregamos la clave al set para deduplicar también DENTRO del mismo lote.
+      // Sin esto, el scraper puede traer el mismo movimiento billed bajo dos
+      // tarjetas distintas en un solo sync y ambos se insertarían (la clave es
+      // agnóstica a la tarjeta a propósito, para no contar dos veces el mismo gasto).
+      existentes.add(clave);
     }
   }
 

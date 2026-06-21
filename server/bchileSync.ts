@@ -28,24 +28,52 @@ function extraerLastFour(label: string): string | null {
   return match ? match[1] : null;
 }
 
-// ─── Monto por cuota ──────────────────────────────────────────────────────────
-// El scraper devuelve el monto total de la compra, no la cuota mensual.
-// "01/05" → dividir entre 5. "01/01" o null → pago único, monto completo.
-function montoPorCuota(amount: number, installments: string | null): number {
-  if (!installments || installments === '01/01') return Math.abs(amount);
-  const total = parseInt(installments.split('/')[1]);
-  return isNaN(total) || total <= 0 ? Math.abs(amount) : Math.round(Math.abs(amount) / total);
+// ─── Filtro de tarjetas fantasma/espejo ───────────────────────────────────────
+// El scraper a veces devuelve una tarjeta extra cuyos movimientos son una copia
+// exacta de los de otra tarjeta (mismo date+amount+description) y que reporta
+// cupo usado = 0. Es un artefacto del scraper, no una tarjeta real.
+//
+// Por qué NO basta con "cupo 0" ni "sin movimientos": una tarjeta real que no
+// usaste también tiene cupo usado 0 y/o 0 movimientos. El único criterio que SÍ
+// la distingue es que su conjunto de movimientos esté CONTENIDO en el de otra
+// tarjeta (espejo) Y que no tenga gasto propio (used = 0). Así nunca descartamos
+// una tarjeta real con movimientos propios ni una real sin uso.
+function firmaMovimientos(card: CreditCardBalance): string[] {
+  return (card.movements ?? []).map(m => `${m.date}|${m.amount}|${m.description}`);
+}
+
+function filtrarTarjetasFantasma(cards: CreditCardBalance[]): CreditCardBalance[] {
+  return cards.filter((card, i) => {
+    const movs = card.movements ?? [];
+    if (movs.length === 0) return true;              // sin movimientos → posible tarjeta real sin uso → conservar
+    if ((card.national?.used ?? 0) > 0) return true; // tiene gasto propio → real
+
+    // used = 0 y con movimientos: descartar solo si son espejo de otra tarjeta
+    const sig = firmaMovimientos(card);
+    const esEspejo = cards.some((otra, j) => {
+      if (j === i) return false;
+      const otraSig = new Set(firmaMovimientos(otra));
+      return sig.every(s => otraSig.has(s));
+    });
+    return !esEspejo;
+  });
 }
 
 // ─── Conversión de movimiento ─────────────────────────────────────────────────
 // cardLastFour: null para cuenta corriente, string para TC
+//
+// Monto: guardamos el monto TOTAL de la compra tal como lo entrega el banco
+// (verificado: la suma de montos sin dividir reconcilia al peso con periodExpenses).
+// NO dividimos por cuota — eso lo hace useProyeccionCuotas solo para proyectar.
+// (Antes dividíamos aquí, lo que además generaba filas duplicadas en re-syncs
+// porque la clave de deduplicación incluye el amount.)
 function convertirMovimiento(
   mov: BankMovement,
   cardLastFour: string | null
 ): Omit<TransaccionParaGuardar, 'user_id'> {
   return {
     category_id: null,
-    amount:      montoPorCuota(mov.amount, mov.installments ?? null),
+    amount:      Math.abs(mov.amount),
     type:        mov.amount >= 0 ? 'income' : 'expense',
     note:        mov.description.trim(),
     date:        convertirFecha(mov.date),
@@ -230,13 +258,16 @@ export async function sincronizarBancoChile(
   const movsCC = (resultado.accounts?.[0]?.movements ?? [])
     .map(mov => convertirMovimiento(mov, null));
 
+  // Descartar tarjetas fantasma/espejo antes de procesar movimientos y cupos.
+  const tarjetasReales = filtrarTarjetasFantasma(resultado.creditCards ?? []);
+
   // ─── Movimientos de tarjetas de crédito ─────────────────────────────────────
   // card_last_four se lee de mov.card ("****6074") por movimiento individual —
   // el scraper puede anidar el mismo movimiento billed en varias tarjetas padre,
   // pero mov.card siempre apunta a la tarjeta real. Fallback al label de la
   // tarjeta padre si mov.card no está disponible.
   const movsTC: Omit<TransaccionParaGuardar, 'user_id'>[] = [];
-  for (const card of resultado.creditCards ?? []) {
+  for (const card of tarjetasReales) {
     for (const mov of card.movements ?? []) {
       const last_four = mov.card
         ? mov.card.replace('****', '')
@@ -250,8 +281,8 @@ export async function sincronizarBancoChile(
   // ─── Persistencia en Supabase ────────────────────────────────────────────────
   const db = crearClienteAdmin();
 
-  if ((resultado.creditCards ?? []).length > 0) {
-    await upsertTarjetas(userId, resultado.creditCards!, db);
+  if (tarjetasReales.length > 0) {
+    await upsertTarjetas(userId, tarjetasReales, db);
   }
 
   const saldo = resultado.accounts?.[0]?.balance;

@@ -9,6 +9,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { clasificar } from '../lib/balanceClassify';
 
 export interface DatosBalanceMensual {
   ingresos: number;
@@ -20,8 +21,9 @@ export interface DatosBalanceMensual {
 
 type TxRow = {
   amount: number;
-  type: string;
+  type: 'income' | 'expense';
   bank_source: string | null;
+  note: string;
 };
 
 export function useBalanceMensual(año: number, mes: number) {
@@ -40,7 +42,7 @@ export function useBalanceMensual(año: number, mes: number) {
 
     const { data } = await supabase
       .from('transactions')
-      .select('amount, type, bank_source')
+      .select('amount, type, bank_source, note')
       .eq('user_id', user.id)
       .gte('date', primerDia)
       .lte('date', ultimoDia);
@@ -49,17 +51,17 @@ export function useBalanceMensual(año: number, mes: number) {
     let egresosTc = 0;
     let egresosCC = 0;
 
+    // Clasificamos por tipo económico (ver lib/balanceClassify): así excluimos
+    // pagos/reversos de TC, traspasos entre cuentas propias y rescates de Fintual
+    // (que no son ingreso/gasto real), y tratamos los aportes a Fintual como ahorro.
     for (const tx of (data ?? []) as unknown as TxRow[]) {
       const monto = Number(tx.amount);
-      if (tx.type === 'income') {
-        ingresos += monto;
-      } else if (
-        tx.bank_source === 'credit_card_unbilled' ||
-        tx.bank_source === 'credit_card_billed'
-      ) {
-        egresosTc += monto;
-      } else {
-        egresosCC += monto;
+      switch (clasificar(tx)) {
+        case 'ingreso':   ingresos += monto; break;
+        case 'egreso_tc': egresosTc += monto; break;
+        case 'egreso_cc': egresosCC += monto; break;
+        // 'ahorro' y 'ignorar' no entran en egresos → quedan reflejados en el
+        // residuo (ahorro = ingresos − egresos).
       }
     }
 
