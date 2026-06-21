@@ -36,10 +36,14 @@ async function verificarServidor(): Promise<void> {
 // ─── Función principal ────────────────────────────────────────────────────────
 export async function sincronizar(): Promise<ResultadoImportacion> {
   // Paso 1: sesión activa
-  const { data: { user }, error: errorAuth } = await supabase.auth.getUser();
-  if (errorAuth || !user) {
+  // Necesitamos la sesión completa (no solo el usuario) para enviar el access_token
+  // al servidor. El servidor valida ese token y deriva el user_id de ahí, en vez de
+  // confiar en un id que mandemos en el cuerpo de la petición.
+  const { data: { session }, error: errorAuth } = await supabase.auth.getSession();
+  if (errorAuth || !session) {
     throw new Error('No hay sesión activa. Por favor inicia sesión nuevamente.');
   }
+  const user = session.user;
 
   // Paso 2: servidor disponible
   await verificarServidor();
@@ -50,8 +54,11 @@ export async function sincronizar(): Promise<ResultadoImportacion> {
   try {
     respuestaHttp = await fetch(`${SERVIDOR_URL}/sync`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: user.id }),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({}),
     });
   } catch {
     throw new Error(

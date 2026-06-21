@@ -9,6 +9,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
+import { createClient } from '@supabase/supabase-js';
 import { sincronizarBancoChile } from './bchileSync';
 
 // Cargar .env.local desde la raíz del proyecto antes de cualquier otra cosa.
@@ -31,16 +32,41 @@ app.use(
   cors({
     origin: ORIGENES_PERMITIDOS,
     methods: ['POST', 'GET'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   })
 );
+
+// ─── Autenticación del cliente ──────────────────────────────────────────────────
+// El cliente manda su token de sesión de Supabase (JWT) en el header Authorization.
+// Lo validamos contra Supabase y derivamos el user_id del token verificado.
+// NUNCA confiamos en un user_id que venga en el cuerpo de la petición: como el
+// servidor usa la service_role (que ignora RLS), aceptar un id arbitrario dejaría
+// que cualquier proceso local escribiera datos bajo cualquier usuario.
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL ?? 'http://127.0.0.1:54321';
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+
+async function obtenerUsuarioAutenticado(authHeader: string | undefined): Promise<string | null> {
+  if (!authHeader?.startsWith('Bearer ')) return null;
+  if (!SUPABASE_ANON_KEY) {
+    console.error('[sync] Falta EXPO_PUBLIC_SUPABASE_ANON_KEY en .env.local para validar la sesión');
+    return null;
+  }
+  const token = authHeader.slice('Bearer '.length).trim();
+  if (!token) return null;
+
+  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data.user) return null;
+  return data.user.id;
+}
 
 // ─── POST /sync ───────────────────────────────────────────────────────────────
 // Ejecuta el scraper y devuelve los movimientos convertidos al formato de la app.
 // La app los guarda en Supabase con su propia sesión de usuario.
 app.post('/sync', async (req, res) => {
-  const userId: string | undefined = req.body?.user_id;
+  const userId = await obtenerUsuarioAutenticado(req.headers.authorization);
   if (!userId) {
-    res.status(400).json({ ok: false, error: 'Falta user_id en el body' });
+    res.status(401).json({ ok: false, error: 'Sesión inválida o ausente. Inicia sesión nuevamente.' });
     return;
   }
 

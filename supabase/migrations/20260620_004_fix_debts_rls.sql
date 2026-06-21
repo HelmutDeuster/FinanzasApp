@@ -1,0 +1,34 @@
+-- Migración 004: corrige fuga de seguridad en la tabla debts (RLS)
+-- Fecha: 2026-06-20 · Sesión de auditoría CTO/UX
+--
+-- PROBLEMA:
+--   La migración 001 creó la política "Lectura pública por token" con USING (true)
+--   para la página pública de cobro (finanzasapp.cl/cobro/[token]). Pero en RLS las
+--   políticas permisivas se combinan con OR, así que ese USING (true) hace que
+--   CUALQUIER SELECT pase. Como la anon key es pública (va en el bundle del cliente),
+--   cualquiera podía leer toda la tabla debts: nombres de personas, montos y tokens
+--   de TODOS los usuarios.
+--
+-- ARREGLO:
+--   Eliminar esa política. La tabla hoy está vacía y sin uso (la pantalla "Me deben"
+--   lee de transactions, no de debts), así que no hay impacto funcional. La política
+--   por dueño ("Usuarios ven sus cobros") se mantiene intacta.
+
+DROP POLICY IF EXISTS "Lectura pública por token" ON public.debts;
+
+-- ─── Cuando se implemente el cobro público, hacerlo así (NO con USING(true)) ──────
+-- El patrón correcto es una función SECURITY DEFINER que reciba el token y devuelva
+-- solo esa fila, sin exponer la tabla a enumeración. Ejemplo para la sesión futura:
+--
+--   CREATE OR REPLACE FUNCTION public.get_debt_by_token(p_token TEXT)
+--   RETURNS TABLE (person TEXT, amount NUMERIC, paid BOOLEAN, confirmed_at TIMESTAMPTZ)
+--   LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
+--     SELECT person, amount, paid, confirmed_at
+--     FROM public.debts
+--     WHERE share_token = p_token;
+--   $$;
+--   REVOKE ALL ON FUNCTION public.get_debt_by_token(TEXT) FROM public;
+--   GRANT EXECUTE ON FUNCTION public.get_debt_by_token(TEXT) TO anon, authenticated;
+--
+-- Así la página pública llama supabase.rpc('get_debt_by_token', { p_token }) y solo
+-- obtiene la fila de ese token, sin poder listar el resto.
