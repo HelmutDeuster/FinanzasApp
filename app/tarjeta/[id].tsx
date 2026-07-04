@@ -123,6 +123,7 @@ export default function DetalleTarjetaScreen() {
     totalBruto,
     factorPeso: factorPesoDetalle,
     esProporcional,
+    pagosCiclo,
     cicloLabel,
     loading,
     error,
@@ -167,6 +168,16 @@ export default function DetalleTarjetaScreen() {
     if (filtroTC === 'cuotas')       return tx.installments !== null;
     return true;
   });
+
+  // Auditoría del ciclo: un ciclo con offset negativo ya cerró (getCycleRange
+  // garantiza que el ciclo de offset 0 siempre termina hoy o en el futuro).
+  // Si todavía queda algo 'credit_card_unbilled' ahí, es el síntoma del bug de
+  // dedup que dejaba filas viejas sin facturar (ver auditoría de julio 2026):
+  // el banco ya facturó ese movimiento, pero la fila vieja nunca se actualizó.
+  const cicloCerrado = cicloOffset < 0;
+  const movimientosNoFacturados = cicloCerrado
+    ? transacciones.filter(tx => tx.bank_source === 'credit_card_unbilled')
+    : [];
 
   // Gráfico: histórico TC real (pasado/actual) + proyección de cuotas (futuro).
   // Pasamos el id de la tarjeta para que el hook aplique distribución proporcional
@@ -353,6 +364,13 @@ export default function DetalleTarjetaScreen() {
               </View>
             </View>
 
+            {/* Pagado a la tarjeta este ciclo — informativo, explica bajadas de used_clp */}
+            {pagosCiclo > 0 && (
+              <Text style={estilos.notaPago}>
+                Pagado a la tarjeta este ciclo: {formatearMonto(pagosCiclo)}
+              </Text>
+            )}
+
             {/* Cuadre contra el cupo usado que informa el banco — solo ciclo vigente */}
             {cicloOffset === 0 && tarjeta?.used_clp != null && (
               cuadraOk ? (
@@ -369,6 +387,27 @@ export default function DetalleTarjetaScreen() {
               )
             )}
           </View>
+
+          {/* ── Alerta: ciclo cerrado con movimientos sin facturar ──── */}
+          {cicloCerrado && movimientosNoFacturados.length > 0 && (
+            <View style={estilos.card}>
+              <View style={estilos.alertaCuadre}>
+                <Text style={estilos.alertaCuadreTexto}>
+                  ⚠ {movimientosNoFacturados.length} movimiento{movimientosNoFacturados.length === 1 ? '' : 's'}{' '}
+                  no debería{movimientosNoFacturados.length === 1 ? '' : 'n'} estar sin facturar en un ciclo cerrado
+                </Text>
+              </View>
+              {movimientosNoFacturados.map(tx => (
+                <View key={tx.id} style={estilos.filaTx}>
+                  <View style={estilos.filaTxIzq}>
+                    <Text style={estilos.txNota} numberOfLines={1}>{tx.note}</Text>
+                    <Text style={estilos.txFecha}>{formatearFecha(tx.date)}</Text>
+                  </View>
+                  <Text style={estilos.txMonto}>{formatearMonto(tx.amount)}</Text>
+                </View>
+              ))}
+            </View>
+          )}
 
           {/* ── Lista de transacciones ──────────────────────────────── */}
           <View style={estilos.card}>
@@ -526,6 +565,7 @@ const estilos = StyleSheet.create({
   toggleTextoActivo: { color: '#F1F0EC' },
 
   // Cuadre con el banco
+  notaPago: { fontSize: 11, color: '#4A4D5A', marginTop: 12, textAlign: 'center' },
   cuadreOk: { fontSize: 11, color: '#639922', marginTop: 12, textAlign: 'center' },
   alertaCuadre: {
     backgroundColor: '#2A1F0F',

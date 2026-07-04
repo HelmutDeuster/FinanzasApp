@@ -166,6 +166,9 @@ export default function CSVImporter() {
             <FilaResumen etiqueta="Total encontradas" valor={resultado.total} color="#374151" />
             <FilaResumen etiqueta="Nuevas importadas" valor={resultado.importadas} color="#059669" />
             <FilaResumen etiqueta="Duplicadas (ignoradas)" valor={resultado.duplicadas} color="#D97706" />
+            {resultado.actualizadas > 0 && (
+              <FilaResumen etiqueta="Actualizadas (no facturado → facturado)" valor={resultado.actualizadas} color="#378ADD" />
+            )}
             {resultado.errores > 0 && (
               <FilaResumen etiqueta="Con error" valor={resultado.errores} color="#DC2626" />
             )}

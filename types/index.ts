@@ -110,8 +110,9 @@ export interface DebtItem {
 
 // El resultado que devuelve el importador al terminar
 export interface ResultadoImportacion {
-  total: number;       // filas encontradas en el CSV
-  importadas: number;  // filas nuevas guardadas
-  duplicadas: number;  // filas que ya existían (ignoradas)
-  errores: number;     // filas que no se pudieron procesar
+  total: number;        // filas encontradas en el CSV
+  importadas: number;   // filas nuevas guardadas
+  duplicadas: number;   // filas que ya existían (ignoradas)
+  actualizadas: number; // filas existentes cuyo bank_source pasó de no facturado a facturado
+  errores: number;      // filas que no se pudieron procesar
 }

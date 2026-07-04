@@ -4,59 +4,73 @@
 import { supabase } from './supabase';
 import { TransaccionParaGuardar, ResultadoImportacion } from '../types';
 
-// ¿Cómo evitamos duplicados?
-// Estrategia: comparamos (user_id + date + amount + type + note)
-// Si ya existe una transacción con esos 5 datos iguales, la ignoramos.
-// No usamos el saldo porque podría cambiar, ni un ID del banco porque no lo tenemos.
-// Esta estrategia cubre el 99% de los casos — un mismo cargo el mismo día
-// con la misma descripción y monto es casi imposible que sea transacción distinta.
-
-// Clave de deduplicación, usada de forma idéntica al consultar la BD y al
-// filtrar el lote entrante (un solo lugar para no divergir).
+// ¿Cómo identificamos la MISMA transacción real entre syncs?
 //
-// Incluye balance_after (saldo corrido después del movimiento) porque el banco
-// NO entrega ID de transacción, hora ni número de operación. Dos transacciones
-// reales idénticas el mismo día (ej. dos transferencias de $100.000 a Fintual)
-// solo se distinguen por el saldo que dejan, que es determinístico y estable.
-// Cuando no hay balance (TC trae 0, TXT trae NULL) este componente queda vacío
-// y la clave se comporta como antes — no empeora ningún caso.
-function claveDedup(t: {
-  date: string; amount: number; type: string; note: string;
-  installments?: string | null; balance_after?: number | null;
+// Antes la clave incluía `note`. Se descubrió que el banco cambia el texto de
+// la descripción cuando una compra de tarjeta pasa de "no facturada" a
+// "facturada" (ej. "PURIA COFFEE BRUNC COMPRAS" → "PURIA COFFEE BRUNC SANTIAGO").
+// Como `note` nunca coincidía entre ambos estados, cada re-sync insertaba una
+// fila nueva en vez de actualizar bank_source de la existente — dejando
+// docenas de filas duplicadas (ver auditoría de julio 2026).
+//
+// Clave estable, sin `note`: fecha + monto + tipo + tarjeta + cuotas + saldo.
+//   - card_last_four: no cambia entre no-facturado/facturado (mismo movimiento,
+//     misma tarjeta). NULL para movimientos de cuenta corriente.
+//   - balance_after: se mantiene en la clave por una razón distinta a card —
+//     para cuenta corriente distingue dos transferencias reales idénticas el
+//     mismo día (ej. dos abonos de $100.000 de la misma persona). En TC este
+//     campo siempre es 0 (verificado en datos reales), así que no interfiere
+//     con el match no-facturado→facturado.
+function claveMatch(t: {
+  date: string; amount: number; type: string;
+  card_last_four?: string | null; installments?: string | null; balance_after?: number | null;
 }): string {
   const bal = t.balance_after == null ? '' : String(Math.round(Number(t.balance_after)));
-  return `${t.date}|${t.amount}|${t.type}|${t.note}|${t.installments ?? ''}|${bal}`;
+  return `${t.date}|${t.amount}|${t.type}|${t.card_last_four ?? ''}|${t.installments ?? ''}|${bal}`;
 }
 
-// Verifica cuáles transacciones ya existen en la base de datos
-// Devuelve un Set con claves únicas de las transacciones existentes
-async function obtenerTransaccionesExistentes(
+// Candidato existente en la BD que podría corresponder a una transacción entrante
+interface Candidato {
+  id: string;
+  bank_source: string | null;
+  note: string;
+}
+
+// Trae las transacciones existentes en las fechas del lote entrante y las
+// agrupa por claveMatch(). Puede haber más de un candidato por clave —
+// ver el caso "CHOCO CHURROS SPA" / "TUU*CHOCO CHURROS S" en la auditoría:
+// dos compras reales distintas coincidieron en fecha+monto+tarjeta. Por eso
+// esto devuelve un array por clave en vez de un solo registro.
+async function obtenerCandidatosExistentes(
   userId: string,
   transacciones: TransaccionParaGuardar[]
-): Promise<Set<string>> {
-  if (transacciones.length === 0) return new Set();
+): Promise<Map<string, Candidato[]>> {
+  const mapa = new Map<string, Candidato[]>();
+  if (transacciones.length === 0) return mapa;
 
-  // Sacamos las fechas únicas del CSV para acotar la consulta
+  // Sacamos las fechas únicas del lote para acotar la consulta
   // (así no pedimos TODAS las transacciones del usuario, solo el rango relevante)
   const fechas = [...new Set(transacciones.map(t => t.date))];
 
   const { data, error } = await supabase
     .from('transactions')
-    .select('date, amount, type, note, installments, balance_after')
+    .select('id, date, amount, type, note, bank_source, installments, card_last_four, balance_after')
     .eq('user_id', userId)
-    .in('date', fechas); // solo busca en las fechas que trae el CSV
+    .in('date', fechas);
 
   if (error) {
     console.error('Error consultando transacciones existentes:', error);
     throw new Error('No se pudo verificar duplicados: ' + error.message);
   }
 
-  const existentes = new Set<string>();
   for (const t of data ?? []) {
-    existentes.add(claveDedup(t as Parameters<typeof claveDedup>[0]));
+    const clave = claveMatch(t as Parameters<typeof claveMatch>[0]);
+    const lista = mapa.get(clave) ?? [];
+    lista.push({ id: t.id, bank_source: t.bank_source, note: t.note });
+    mapa.set(clave, lista);
   }
 
-  return existentes;
+  return mapa;
 }
 
 // Función principal del servicio
@@ -69,35 +83,90 @@ export async function importarTransacciones(
     total: transacciones.length,
     importadas: 0,
     duplicadas: 0,
+    actualizadas: 0,
     errores: 0,
   };
 
   if (transacciones.length === 0) return resultado;
 
-  // Paso 1: consultar qué ya existe en la BD
+  // Paso 1: consultar candidatos existentes en la BD, agrupados por clave
   const userId = transacciones[0].user_id;
   // [DIAG] userId que se usa para consultar y para insertar
   console.log('[import] userId:', userId);
-  const existentes = await obtenerTransaccionesExistentes(userId, transacciones);
-  // [DIAG] cuántas transacciones ya existían en las fechas del lote
-  console.log('[import] existentes encontrados:', existentes.size, '| nuevas a insertar:', transacciones.length - existentes.size);
+  const candidatosPorClave = await obtenerCandidatosExistentes(userId, transacciones);
 
-  // Paso 2: filtrar las nuevas (las que no están en existentes)
+  // Paso 2: clasificar cada transacción entrante en 3 vías:
+  //   - duplicada exacta (misma nota y mismo bank_source ya existen) → ignorar
+  //   - actualización (1 solo candidato, pasó de no-facturado a facturado) → UPDATE
+  //   - nueva (sin candidato, o candidatos ambiguos sin match exacto) → INSERT
+  //
+  // El caso ambiguo (más de 1 candidato) ocurre cuando dos compras reales
+  // distintas coinciden en fecha+monto+tarjeta+cuotas+saldo (ver "CHOCO CHURROS
+  // SPA" vs "TUU*CHOCO CHURROS S" en la auditoría). Ahí NO adivinamos cuál
+  // actualizar — si no hay un match exacto por nota, se inserta como nueva,
+  // igual que el comportamiento anterior (no empeora ese caso raro).
   const nuevas: TransaccionParaGuardar[] = [];
+  const actualizaciones: { id: string; cambios: Partial<TransaccionParaGuardar> }[] = [];
 
   for (const t of transacciones) {
-    const clave = claveDedup(t);
-    if (existentes.has(clave)) {
+    const clave = claveMatch(t);
+    const candidatos = candidatosPorClave.get(clave) ?? [];
+
+    const duplicadoExacto = candidatos.find(
+      c => c.note === t.note && c.bank_source === (t.bank_source ?? null)
+    );
+    if (duplicadoExacto) {
       resultado.duplicadas++;
-    } else {
-      nuevas.push(t);
-      // Agregamos la clave al set para deduplicar también DENTRO del mismo lote.
-      // Sin esto, el scraper puede traer el mismo movimiento billed bajo dos
-      // tarjetas distintas en un solo sync y ambos se insertarían (la clave es
-      // agnóstica a la tarjeta a propósito, para no contar dos veces el mismo gasto).
-      existentes.add(clave);
+      continue;
     }
+
+    if (candidatos.length === 1) {
+      const candidato = candidatos[0];
+      if (candidato.bank_source === 'credit_card_unbilled' && t.bank_source === 'credit_card_billed' && candidato.id) {
+        actualizaciones.push({
+          id: candidato.id,
+          cambios: {
+            bank_source: t.bank_source,
+            note: t.note,
+            balance_after: t.balance_after ?? null,
+            installments: t.installments ?? null,
+          },
+        });
+        // Reflejamos el cambio en el candidato para que un segundo movimiento
+        // del mismo lote con la misma clave lo vea ya actualizado.
+        candidato.bank_source = t.bank_source;
+        candidato.note = t.note;
+        continue;
+      }
+
+      // bank_source distinto pero no es el upgrade esperado (ej. facturado →
+      // no facturado, que no debería pasar) — no tocamos el dato existente
+      // por seguridad, solo lo registramos para revisión manual.
+      if (candidato.bank_source !== (t.bank_source ?? null)) {
+        console.warn(
+          '[import] bank_source inesperado, se ignora:', clave,
+          candidato.bank_source, '->', t.bank_source
+        );
+      }
+      resultado.duplicadas++;
+      continue;
+    }
+
+    if (candidatos.length > 1) {
+      console.warn('[import] Clave ambigua con', candidatos.length, 'candidatos — se inserta como nueva:', clave);
+    }
+
+    // Nueva transacción real — sin candidato exacto ni candidato único para actualizar
+    nuevas.push(t);
+    candidatosPorClave.set(clave, [...candidatos, { id: '', bank_source: t.bank_source ?? null, note: t.note }]);
   }
+
+  // [DIAG] resumen de la clasificación
+  console.log(
+    '[import] nuevas:', nuevas.length,
+    '| actualizaciones:', actualizaciones.length,
+    '| duplicadas:', resultado.duplicadas
+  );
 
   // Paso 3: insertar las nuevas en lotes de 50
   // ¿Por qué lotes? Supabase tiene límite de tamaño por request.
@@ -122,10 +191,29 @@ export async function importarTransacciones(
     }
 
     // Actualizar progreso si se pasó el callback
-    // El progreso va del 0 al 100 según los lotes procesados
+    // El progreso va del 0 al 100 según los lotes procesados (inserciones primero,
+    // actualizaciones después — ver más abajo)
     if (onProgreso && totalNuevas > 0) {
       const porcentaje = Math.round(((i + lote.length) / totalNuevas) * 100);
       onProgreso(Math.min(porcentaje, 100));
+    }
+  }
+
+  // Paso 4: aplicar actualizaciones (no-facturado → facturado) una por una.
+  // Son registros ya existentes identificados por id — no hay upsert por
+  // clave natural posible porque no existe una constraint única sobre
+  // (date, amount, type, card_last_four, installments, balance_after).
+  for (const { id, cambios } of actualizaciones) {
+    const { error } = await supabase
+      .from('transactions')
+      .update(cambios)
+      .eq('id', id);
+
+    if (error) {
+      console.error('[import] Error actualizando transacción', id, ':', JSON.stringify(error, null, 2));
+      resultado.errores++;
+    } else {
+      resultado.actualizadas++;
     }
   }
 

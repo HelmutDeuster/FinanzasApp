@@ -86,7 +86,7 @@ export async function sincronizar(): Promise<ResultadoImportacion> {
 
   // Paso 4: importar movimientos con deduplicación
   if (movimientos.length === 0) {
-    return { total: 0, importadas: 0, duplicadas: 0, errores: 0 };
+    return { total: 0, importadas: 0, duplicadas: 0, actualizadas: 0, errores: 0 };
   }
 
   const transacciones: TransaccionParaGuardar[] = movimientos.map(mov => ({

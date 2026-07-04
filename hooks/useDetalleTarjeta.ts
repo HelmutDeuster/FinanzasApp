@@ -36,6 +36,7 @@ export function useDetalleTarjeta(tarjetaId: string) {
   const [refreshKey, setRefreshKey]       = useState(0);
   const [factorPeso, setFactorPeso]       = useState(1);
   const [esProporcional, setEsProporcional] = useState(false);
+  const [pagosCiclo, setPagosCiclo]       = useState(0);
   const [loading, setLoading]             = useState(true);
   const [error, setError]                 = useState<string | null>(null);
 
@@ -82,10 +83,14 @@ export function useDetalleTarjeta(tarjetaId: string) {
       const { start, end } = getCycleRange(tarjeta!.cycle_close_day, cicloOffset);
       const { startISO, endISO } = cicloAIso(start, end);
 
-      // Cargamos transacciones TC y todas las tarjetas activas en paralelo.
-      // Las tarjetas se necesitan para calcular el peso proporcional cuando
-      // card_last_four es NULL (situación actual con el scraper v2.1.2).
-      const [txResult, cardsResult] = await Promise.all([
+      // Cargamos transacciones TC, pagos a la tarjeta y todas las tarjetas activas
+      // en paralelo. Las tarjetas se necesitan para calcular el peso proporcional
+      // cuando card_last_four es NULL (situación actual con el scraper v2.1.2).
+      //
+      // "Pagos a la tarjeta" (type='income') comparten bank_source con las compras
+      // pero son abonos, no gasto — se consultan aparte para mostrarlos como dato
+      // informativo en el bloque de auditoría del ciclo, sin mezclarlos con el total.
+      const [txResult, pagosResult, cardsResult] = await Promise.all([
         supabase
           .from('transactions')
           .select('id, amount, note, date, owner, split_amount, split_person, installments, card_last_four, bank_source')
@@ -95,6 +100,14 @@ export function useDetalleTarjeta(tarjetaId: string) {
           .gte('date', startISO)
           .lte('date', endISO)
           .order('date', { ascending: false }),
+        supabase
+          .from('transactions')
+          .select('amount, card_last_four')
+          .eq('user_id', user.id)
+          .eq('type', 'income')
+          .in('bank_source', ['credit_card_unbilled', 'credit_card_billed'])
+          .gte('date', startISO)
+          .lte('date', endISO),
         supabase
           .from('credit_cards')
           .select('id, used_clp, last_four')
@@ -110,6 +123,7 @@ export function useDetalleTarjeta(tarjetaId: string) {
       }
 
       const rawTx = (txResult.data ?? []) as unknown as TransaccionDetalleRaw[];
+      const rawPagos = (pagosResult.data ?? []) as { amount: number; card_last_four: string | null }[];
       const todasLasTarjetas = (cardsResult.data ?? []) as {
         id: string; used_clp: number | null; last_four: string | null;
       }[];
@@ -135,9 +149,16 @@ export function useDetalleTarjeta(tarjetaId: string) {
         txFiltradas = rawTx;
       }
 
+      // Pagos a la tarjeta del ciclo — misma estrategia exacta/proporcional que arriba
+      const pagosFiltrados = hayCardLastFour
+        ? rawPagos.filter(p => p.card_last_four === tarjeta!.last_four)
+        : rawPagos;
+      const pagosTotal = pagosFiltrados.reduce((s, p) => s + Number(p.amount), 0);
+
       setTransacciones(txFiltradas);
       setFactorPeso(factor);
       setEsProporcional(esProp);
+      setPagosCiclo(Math.round(pagosTotal * factor));
       setLoading(false);
     }
 
@@ -181,6 +202,7 @@ export function useDetalleTarjeta(tarjetaId: string) {
     totalBruto: Math.round(totalBruto * factorPeso),
     factorPeso, // expuesto para escalar subtotales por categoría (reconciliación)
     esProporcional,
+    pagosCiclo, // pagos hechos A la tarjeta este ciclo — informativo, no es gasto
     cicloLabel,
     loading,
     error,
