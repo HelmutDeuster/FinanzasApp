@@ -11,7 +11,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { getCycleRange, formatearRangoCiclo, cicloAIso } from '../lib/cycleUtils';
-import type { CreditCard } from '../types';
+import type { CreditCard, BankSource } from '../types';
 
 export interface TransaccionDetalle {
   id: string;
@@ -22,6 +22,7 @@ export interface TransaccionDetalle {
   split_amount: number | null;
   split_person: string | null;
   installments: string | null;   // "02/06" — para mostrar en el detalle
+  bank_source: BankSource;       // 'credit_card_billed' | 'credit_card_unbilled' — para filtro/cuadre
 }
 
 interface TransaccionDetalleRaw extends TransaccionDetalle {
@@ -87,7 +88,7 @@ export function useDetalleTarjeta(tarjetaId: string) {
       const [txResult, cardsResult] = await Promise.all([
         supabase
           .from('transactions')
-          .select('id, amount, note, date, owner, split_amount, split_person, installments, card_last_four')
+          .select('id, amount, note, date, owner, split_amount, split_person, installments, card_last_four, bank_source')
           .eq('user_id', user.id)
           .eq('type', 'expense')
           .in('bank_source', ['credit_card_unbilled', 'credit_card_billed'])
@@ -178,6 +179,7 @@ export function useDetalleTarjeta(tarjetaId: string) {
     puedeAvanzar,
     totalNeto:  Math.round(totalNeto  * factorPeso),
     totalBruto: Math.round(totalBruto * factorPeso),
+    factorPeso, // expuesto para escalar subtotales por categoría (reconciliación)
     esProporcional,
     cicloLabel,
     loading,

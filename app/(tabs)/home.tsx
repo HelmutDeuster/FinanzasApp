@@ -480,8 +480,37 @@ function FilaTxCC({ tx }: { tx: TransaccionCC }) {
   );
 }
 
+// ─── Filtro Ingresos/Egresos — pestaña Cuenta ────────────────────────────────
+// Filtra en memoria sobre datos.ultimas, ya cargados por el hook — sin query nueva.
+type FiltroCC = 'todas' | 'ingreso' | 'egreso';
+
+function SegmentedFiltroCC({ filtro, onChange }: { filtro: FiltroCC; onChange: (f: FiltroCC) => void }) {
+  const opciones: { valor: FiltroCC; label: string }[] = [
+    { valor: 'todas',   label: 'Todas' },
+    { valor: 'ingreso', label: 'Ingresos' },
+    { valor: 'egreso',  label: 'Egresos' },
+  ];
+  return (
+    <View style={estilos.toggle}>
+      {opciones.map(({ valor, label }) => (
+        <TouchableOpacity
+          key={valor}
+          style={[estilos.toggleOpcion, filtro === valor && estilos.toggleActivo]}
+          onPress={() => onChange(valor)}
+          activeOpacity={0.8}
+        >
+          <Text style={[estilos.toggleTexto, filtro === valor && estilos.toggleTextoActivo]}>
+            {label}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+}
+
 function PestañaCuenta({ onSetRefrescar }: { onSetRefrescar: (fn: () => void) => void }) {
   const hoy = new Date();
+  const [filtro, setFiltro] = useState<FiltroCC>('todas');
   const [periodo, setPeriodo] = useState({ año: hoy.getFullYear(), mes: hoy.getMonth() });
 
   const puedeIrSiguiente =
@@ -578,11 +607,18 @@ function PestañaCuenta({ onSetRefrescar }: { onSetRefrescar: (fn: () => void) =
       {/* Últimas transacciones CC */}
       <View style={estilos.tarjeta}>
         <Text style={estilos.tituloSeccion}>Últimas transacciones CC</Text>
-        {(datos?.ultimas.length ?? 0) === 0 ? (
-          <Text style={estilos.textoVacio}>Sin transacciones de CC este mes</Text>
-        ) : (
-          datos!.ultimas.map(tx => <FilaTxCC key={tx.id} tx={tx} />)
-        )}
+        <SegmentedFiltroCC filtro={filtro} onChange={setFiltro} />
+        {(() => {
+          const tipo = filtro === 'ingreso' ? 'income' : filtro === 'egreso' ? 'expense' : null;
+          const filtradas = tipo ? (datos?.ultimas ?? []).filter(tx => tx.type === tipo) : (datos?.ultimas ?? []);
+          if (filtradas.length === 0) {
+            const mensaje = filtro === 'ingreso' ? 'Sin ingresos este mes'
+                          : filtro === 'egreso'  ? 'Sin egresos este mes'
+                          : 'Sin transacciones de CC este mes';
+            return <Text style={estilos.textoVacio}>{mensaje}</Text>;
+          }
+          return filtradas.map(tx => <FilaTxCC key={tx.id} tx={tx} />);
+        })()}
       </View>
     </>
   );
@@ -939,6 +975,23 @@ const estilos = StyleSheet.create({
     color: '#F1F0EC',
     marginBottom: 16,
   },
+  // Segmentado Todas/Ingresos/Egresos — pestaña Cuenta
+  toggle: {
+    flexDirection: 'row',
+    backgroundColor: '#0F1117',
+    borderRadius: 10,
+    padding: 3,
+    marginBottom: 12,
+  },
+  toggleOpcion: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  toggleActivo: { backgroundColor: '#2A2D38' },
+  toggleTexto: { fontSize: 13, fontWeight: '500', color: '#4A4D5A' },
+  toggleTextoActivo: { color: '#F1F0EC' },
   seccionLabel: {
     fontSize: 11,
     fontWeight: '600',

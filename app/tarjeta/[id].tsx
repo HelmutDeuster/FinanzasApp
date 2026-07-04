@@ -76,6 +76,38 @@ function FilaTx({ tx, onPress }: { tx: TransaccionDetalle; onPress: () => void }
   );
 }
 
+// ─── Filtro Facturado/No facturado/En cuotas ──────────────────────────────────
+type FiltroTC = 'todas' | 'facturado' | 'no_facturado' | 'cuotas';
+
+function SegmentedFiltroTC({ filtro, onChange }: { filtro: FiltroTC; onChange: (f: FiltroTC) => void }) {
+  const opciones: { valor: FiltroTC; label: string }[] = [
+    { valor: 'todas',        label: 'Todas' },
+    { valor: 'facturado',    label: 'Facturado' },
+    { valor: 'no_facturado', label: 'No facturado' },
+    { valor: 'cuotas',       label: 'En cuotas' },
+  ];
+  return (
+    <View style={estilos.toggle}>
+      {opciones.map(({ valor, label }) => (
+        <TouchableOpacity
+          key={valor}
+          style={[estilos.toggleOpcion, filtro === valor && estilos.toggleActivo]}
+          onPress={() => onChange(valor)}
+          activeOpacity={0.8}
+        >
+          <Text
+            style={[estilos.toggleTexto, filtro === valor && estilos.toggleTextoActivo]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+          >
+            {label}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+}
+
 // ─── Pantalla principal ───────────────────────────────────────────────────────
 
 export default function DetalleTarjetaScreen() {
@@ -89,12 +121,52 @@ export default function DetalleTarjetaScreen() {
     puedeAvanzar,
     totalNeto,
     totalBruto,
+    factorPeso: factorPesoDetalle,
     esProporcional,
     cicloLabel,
     loading,
     error,
     recargar,
   } = useDetalleTarjeta(id ?? '');
+
+  // Filtro Facturado/No facturado/En cuotas — sobre las transacciones del ciclo activo
+  const [filtroTC, setFiltroTC] = useState<FiltroTC>('todas');
+
+  // Subtotales por categoría — SIEMPRE sobre todas las transacciones del ciclo
+  // (no sobre el filtro activo), para que sirvan de referencia comparativa constante.
+  // Se escalan con factorPesoDetalle, igual que totalNeto/totalBruto del hook, para
+  // ser consistentes con la distribución proporcional (card_last_four es NULL hoy).
+  const subtotalFacturado = Math.round(
+    transacciones
+      .filter(tx => tx.bank_source === 'credit_card_billed')
+      .reduce((s, tx) => s + Number(tx.amount), 0) * factorPesoDetalle
+  );
+  const subtotalNoFacturado = Math.round(
+    transacciones
+      .filter(tx => tx.bank_source === 'credit_card_unbilled')
+      .reduce((s, tx) => s + Number(tx.amount), 0) * factorPesoDetalle
+  );
+  const subtotalCuotas = Math.round(
+    transacciones
+      .filter(tx => tx.installments !== null)
+      .reduce((s, tx) => s + Number(tx.amount), 0) * factorPesoDetalle
+  );
+
+  // Cuadre: facturado + no facturado cubre el 100% de las transacciones del ciclo
+  // (son las dos únicas categorías de bank_source, mutuamente excluyentes), así que
+  // equivale exactamente a totalBruto — ya escalado por factorPesoDetalle.
+  // Solo tiene sentido en el ciclo vigente (cicloOffset === 0): used_clp es el cupo
+  // usado HOY según el banco, no un valor histórico por ciclo.
+  const diferenciaCuadre = totalBruto - (tarjeta?.used_clp ?? 0);
+  const cuadraOk = Math.abs(diferenciaCuadre) <= 1000;
+
+  // Lista filtrada para la sección de transacciones
+  const transaccionesFiltradas = transacciones.filter(tx => {
+    if (filtroTC === 'facturado')    return tx.bank_source === 'credit_card_billed';
+    if (filtroTC === 'no_facturado') return tx.bank_source === 'credit_card_unbilled';
+    if (filtroTC === 'cuotas')       return tx.installments !== null;
+    return true;
+  });
 
   // Gráfico: histórico TC real (pasado/actual) + proyección de cuotas (futuro).
   // Pasamos el id de la tarjeta para que el hook aplique distribución proporcional
@@ -261,13 +333,53 @@ export default function DetalleTarjetaScreen() {
             )}
           </View>
 
+          {/* ── Subtotales por categoría + cuadre con el banco ───────── */}
+          <View style={estilos.card}>
+            <Text style={estilos.tituloSeccion}>Subtotales del ciclo</Text>
+            <View style={estilos.statsRow}>
+              <View style={estilos.statBloque}>
+                <Text style={estilos.statLabel}>Facturado</Text>
+                <Text style={estilos.statMonto}>{formatearMonto(subtotalFacturado)}</Text>
+              </View>
+              <View style={estilos.statDivisor} />
+              <View style={estilos.statBloque}>
+                <Text style={estilos.statLabel}>No facturado</Text>
+                <Text style={estilos.statMonto}>{formatearMonto(subtotalNoFacturado)}</Text>
+              </View>
+              <View style={estilos.statDivisor} />
+              <View style={estilos.statBloque}>
+                <Text style={estilos.statLabel}>En cuotas</Text>
+                <Text style={estilos.statMonto}>{formatearMonto(subtotalCuotas)}</Text>
+              </View>
+            </View>
+
+            {/* Cuadre contra el cupo usado que informa el banco — solo ciclo vigente */}
+            {cicloOffset === 0 && tarjeta?.used_clp != null && (
+              cuadraOk ? (
+                <Text style={estilos.cuadreOk}>
+                  ✓ Cuadra con el cupo usado informado por el banco
+                </Text>
+              ) : (
+                <View style={estilos.alertaCuadre}>
+                  <Text style={estilos.alertaCuadreTexto}>
+                    ⚠ Diferencia de {formatearMonto(diferenciaCuadre)} vs. el cupo usado
+                    informado por el banco ({formatearMonto(tarjeta.used_clp)})
+                  </Text>
+                </View>
+              )
+            )}
+          </View>
+
           {/* ── Lista de transacciones ──────────────────────────────── */}
           <View style={estilos.card}>
             <Text style={estilos.tituloSeccion}>Transacciones</Text>
+            <SegmentedFiltroTC filtro={filtroTC} onChange={setFiltroTC} />
             {transacciones.length === 0 ? (
               <Text style={estilos.textoVacio}>Sin transacciones en este ciclo</Text>
+            ) : transaccionesFiltradas.length === 0 ? (
+              <Text style={estilos.textoVacio}>Sin transacciones en esta categoría</Text>
             ) : (
-              transacciones.map(tx => (
+              transaccionesFiltradas.map(tx => (
                 <FilaTx
                   key={tx.id}
                   tx={tx}
@@ -393,4 +505,35 @@ const estilos = StyleSheet.create({
   // Nota informativa del gráfico
   notaGrafico: { fontSize: 10, color: '#2A2D38', marginTop: 8, textAlign: 'center' },
   notaProporcional: { fontSize: 10, color: '#4A4D5A', marginTop: 10, textAlign: 'center', fontStyle: 'italic' },
+
+  // Segmentado Todas/Facturado/No facturado/En cuotas
+  toggle: {
+    flexDirection: 'row',
+    backgroundColor: '#0F1117',
+    borderRadius: 10,
+    padding: 3,
+    marginBottom: 12,
+  },
+  toggleOpcion: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 2,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  toggleActivo: { backgroundColor: '#2A2D38' },
+  toggleTexto: { fontSize: 11, fontWeight: '500', color: '#4A4D5A', textAlign: 'center' },
+  toggleTextoActivo: { color: '#F1F0EC' },
+
+  // Cuadre con el banco
+  cuadreOk: { fontSize: 11, color: '#639922', marginTop: 12, textAlign: 'center' },
+  alertaCuadre: {
+    backgroundColor: '#2A1F0F',
+    borderWidth: 0.5,
+    borderColor: '#F5A623',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 12,
+  },
+  alertaCuadreTexto: { fontSize: 12, color: '#F5A623', fontWeight: '500', textAlign: 'center' },
 });

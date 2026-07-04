@@ -2,9 +2,11 @@
 // Datos para la pestaña "Cuenta" del Home.
 //
 // Qué carga:
-//   - Último saldo de cuenta corriente (account_snapshots más reciente)
+//   - Último saldo de cuenta corriente (account_snapshots más reciente — dato "en vivo")
 //   - Ingresos y gastos CC del mes seleccionado (bank_source = 'account' o NULL = TXT)
-//   - Historial del saldo para el gráfico (último snapshot de cada mes, hasta 8 meses)
+//   - Historial del saldo para el gráfico (reconstruido desde balance_after de
+//     transactions, no desde account_snapshots — así el histórico no depende de
+//     que sigamos sincronizando a futuro; ver detalle en la sección 1 más abajo)
 //   - Últimas transacciones CC del mes
 
 import { useState, useEffect, useCallback } from 'react';
@@ -48,26 +50,55 @@ export function useModoCuentaCC(año: number, mes: number) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setLoading(false); return; }
 
-    // ── 1. Snapshots de saldo CC ──────────────────────────────────────────
-    // Traemos los últimos N snapshots (uno por sync). El más reciente = saldo actual.
-    // Los demás sirven para el gráfico.
+    // ── 1. Saldo actual + histórico para el gráfico ───────────────────────
+    // Saldo actual "en vivo": el snapshot más reciente (lo escribe cada sync).
     const { data: snapshots } = await supabase
       .from('account_snapshots')
       .select('balance, synced_at')
       .eq('user_id', user.id)
       .order('synced_at', { ascending: false })
-      .limit(100);
+      .limit(1);
 
     const ultimo = snapshots?.[0] ?? null;
 
-    // Agrupar por mes: para cada mes-año, nos quedamos con el balance del snapshot
-    // más reciente de ese mes (el array viene ordenado desc, entonces el primero que
-    // encontremos por mes es el más reciente).
+    // Histórico del gráfico: reconstruido desde balance_after de transactions,
+    // NO desde account_snapshots. Por qué:
+    //   - account_snapshots solo tiene datos desde que empezamos a sincronizar;
+    //     balance_after ya viene poblado en cada movimiento de open-banking,
+    //     así que un sync histórico completo alimenta el gráfico de inmediato.
+    //
+    // Importante — bank_source = 'account' es obligatorio en el filtro:
+    //   balance_after también existe en movimientos de TC, pero el scraper
+    //   siempre lo deja en 0 para esos casos (verificado en datos reales:
+    //   credit_card_billed/credit_card_unbilled → balance_after = 0 siempre).
+    //   Si no filtráramos, esos ceros contaminarían el histórico de saldo CC.
+    //
+    // TXT/manual (bank_source NULL): el parser de TXT nunca setea balance_after,
+    // así que esas filas quedan NULL y se excluyen solas (.not is null). Si en el
+    // futuro se importa un TXT viejo, esos meses simplemente no aportan punto al
+    // gráfico — mismo comportamiento que hoy con snapshots.
+    //
+    // Desempate intra-mes: puede haber varios movimientos el mismo día. Ordenamos
+    // por (date, created_at) y nos quedamos con el último de cada mes calendario
+    // — created_at es el mejor desempate disponible (el banco no expone secuencia).
+    const desdeHistorial = new Date(año, mes - (MESES_HISTORIAL - 1), 1).toISOString().slice(0, 10);
+
+    const { data: histData } = await supabase
+      .from('transactions')
+      .select('date, balance_after, created_at')
+      .eq('user_id', user.id)
+      .eq('bank_source', 'account')
+      .not('balance_after', 'is', null)
+      .gte('date', desdeHistorial)
+      .order('date', { ascending: true })
+      .order('created_at', { ascending: true });
+
+    // Al recorrer en orden ascendente, la última asignación por mes es la vigente.
     const porMes = new Map<string, number>();
-    for (const s of snapshots ?? []) {
-      const d = new Date(s.synced_at);
+    for (const tx of histData ?? []) {
+      const d = new Date(tx.date + 'T12:00:00');
       const key = `${d.getFullYear()}-${d.getMonth()}`;
-      if (!porMes.has(key)) porMes.set(key, s.balance); // primer = más reciente
+      porMes.set(key, Number(tx.balance_after));
     }
 
     // Construir el array del gráfico para los últimos MESES_HISTORIAL meses
